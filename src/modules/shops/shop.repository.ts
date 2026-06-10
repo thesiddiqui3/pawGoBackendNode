@@ -41,7 +41,13 @@ export class ShopRepository {
   }
 
   async findById(id: string): Promise<Shop | null> {
-    return this.prisma.shop.findUnique({ where: { id } });
+    return this.prisma.shop.findUnique({
+      where: { id },
+      include: {
+        owner: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+        _count: { select: { products: true, orders: true } },
+      },
+    }) as any;
   }
 
   async findByOwner(ownerId: string): Promise<Shop | null> {

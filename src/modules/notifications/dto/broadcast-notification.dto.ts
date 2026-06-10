@@ -1,5 +1,4 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { UserRole } from '../../../common/enums';
+import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export enum BroadcastTarget {
   ALL_USERS = 'ALL_USERS',
@@ -18,10 +17,22 @@ export class BroadcastNotificationDto {
   @IsNotEmpty()
   message: string;
 
+  // Legacy single-target format
+  @IsOptional()
   @IsEnum(BroadcastTarget)
-  target: BroadcastTarget;
+  target?: BroadcastTarget;
+
+  // Frontend multi-role format: ["PET_OWNER", "CLINIC_OWNER", ...]
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roles?: string[];
 
   @IsString()
   @IsOptional()
   imageUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  type?: string;
 }

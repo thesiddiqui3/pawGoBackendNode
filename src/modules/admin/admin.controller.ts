@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -24,6 +24,28 @@ import { AdminDashboardService } from './admin-dashboard.service';
 import { AdminProvisionService } from './admin-provision.service';
 import { AdminUserService } from './admin-user.service';
 import { AdminUserQueryDto } from './dto/admin-user-query.dto';
+import { ReviewsService } from '../reviews/reviews.service';
+import { ReviewQueryDto } from '../reviews/dto';
+import { ComplaintsService } from '../complaints/complaints.service';
+import { ComplaintQueryDto } from '../complaints/dto/complaint-query.dto';
+import { AppointmentRepository } from '../appointments/appointment.repository';
+import { AppointmentQueryDto } from '../appointments/dto/appointment-query.dto';
+import { ClinicsService } from '../clinics/clinics.service';
+import { UpdateClinicDto } from '../clinics/dto/update-clinic.dto';
+import { ShopsService } from '../shops/shops.service';
+import { UpdateShopDto } from '../shops/dto/update-shop.dto';
+import { DeliveryPartnerRepository } from '../delivery-partners/delivery-partner.repository';
+import { UpdateComplaintStatusDto } from '../complaints/dto/update-complaint-status.dto';
+import { DoctorRepository } from '../doctors/doctor.repository';
+import { CancelAppointmentDto } from '../appointments/dto/cancel-appointment.dto';
+import { AppointmentStatus, OrderStatus } from '@prisma/client';
+import { ProductsService } from '../products/products.service';
+import { ProductQueryDto } from '../products/dto/product-query.dto';
+import { VerificationDocsService } from '../verification-docs/verification-docs.service';
+import { ReviewDocDto } from '../verification-docs/dto/upload-doc.dto';
+import { BookingRepository } from '../services/booking.repository';
+import { BookingQueryDto, ServiceQueryDto, CreateServiceDto, UpdateServiceDto } from '../services/dto';
+import { ServiceRepository } from '../services/service.repository';
 
 class ProvisionClinicBodyDto {
   @ApiProperty({ example: 'Rahul' })
@@ -159,6 +181,30 @@ class BulkStatusDto {
   @IsEnum(['ACTIVE', 'SUSPENDED']) status: 'ACTIVE' | 'SUSPENDED';
 }
 
+class AdminUpdateUserDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() firstName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lastName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
+}
+
+class AdminOrderStatusDto {
+  @ApiProperty({ enum: OrderStatus }) @IsEnum(OrderStatus) status: OrderStatus;
+  @ApiPropertyOptional() @IsOptional() @IsString() remarks?: string;
+}
+
+class AdminCreateServiceDto extends CreateServiceDto {
+  @ApiProperty({ description: 'Clinic this service belongs to' })
+  @IsString() @IsNotEmpty() clinicId: string;
+
+  @ApiPropertyOptional({ description: 'Alias for price (frontend compatibility)' })
+  @IsOptional() @IsNumber() basePrice?: number;
+}
+
+class AdminUpdateServiceDto extends UpdateServiceDto {
+  @ApiPropertyOptional() @IsOptional() @IsNumber() basePrice?: number;
+}
+
 class AdminNotificationQueryDto extends PaginationDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -200,6 +246,17 @@ export class AdminController {
     private readonly adminUserSvc: AdminUserService,
     private readonly shopRepo: ShopRepository,
     private readonly clinicRepo: ClinicRepository,
+    private readonly reviewsSvc: ReviewsService,
+    private readonly complaintsSvc: ComplaintsService,
+    private readonly appointmentRepo: AppointmentRepository,
+    private readonly clinicsSvc: ClinicsService,
+    private readonly shopsSvc: ShopsService,
+    private readonly deliveryPartnerRepo: DeliveryPartnerRepository,
+    private readonly doctorRepo: DoctorRepository,
+    private readonly productsSvc: ProductsService,
+    private readonly verificationDocsSvc: VerificationDocsService,
+    private readonly bookingRepo: BookingRepository,
+    private readonly serviceRepo: ServiceRepository,
   ) {}
 
   @Get('dashboard')
@@ -214,6 +271,15 @@ export class AdminController {
   async allOrders(@Query() query: OrderQueryDto): Promise<ApiResponseDto<object>> {
     const result = await this.orderRepo.findMany({}, query);
     return ApiResponseDto.success(result);
+  }
+
+  @Get('orders/:id')
+  @ApiOperation({ summary: 'Get order detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getOrder(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const order = await this.orderRepo.findById(id);
+    if (!order) throw new NotFoundException('Order not found');
+    return ApiResponseDto.success(order);
   }
 
   @Get('notifications')
@@ -233,6 +299,50 @@ export class AdminController {
     return ApiResponseDto.success(result);
   }
 
+  @Get('clinics/:id')
+  @ApiOperation({ summary: 'Get clinic detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicRepo.findById(id);
+    if (!clinic) throw new NotFoundException('Clinic not found');
+    return ApiResponseDto.success(clinic);
+  }
+
+  @Patch('clinics/:id')
+  @ApiOperation({ summary: 'Update clinic details (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateClinic(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateClinicDto,
+  ): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicsSvc.update(id, dto, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(clinic, 'Clinic updated');
+  }
+
+  @Delete('clinics/:id')
+  @ApiOperation({ summary: 'Soft-delete a clinic (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
+    await this.clinicsSvc.remove(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(null, 'Clinic deleted');
+  }
+
+  @Patch('clinics/:id/suspend')
+  @ApiOperation({ summary: 'Suspend a clinic (disable without deleting) (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async suspendClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicsSvc.suspend(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(clinic, 'Clinic suspended');
+  }
+
+  @Patch('clinics/:id/activate')
+  @ApiOperation({ summary: 'Re-activate a suspended clinic (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async activateClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicsSvc.activate(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(clinic, 'Clinic activated');
+  }
+
   @Post('clinics')
   @ApiOperation({ summary: 'Admin: create a clinic owner account + clinic, returns temporary credentials' })
   async provisionClinic(@Body() dto: ProvisionClinicBodyDto): Promise<ApiResponseDto<object>> {
@@ -249,7 +359,7 @@ export class AdminController {
     return ApiResponseDto.success(result, 'Shop created. Share credentials with the owner.');
   }
 
-  // ─── Shop List ────────────────────────────────────────────────────────────
+  // ─── Shop List + Detail ───────────────────────────────────────────────────
 
   @Get('shops')
   @ApiOperation({ summary: 'List all verified shops with filters (admin)' })
@@ -262,6 +372,50 @@ export class AdminController {
       ...(query.isActive !== undefined && { isActive: query.isActive }),
     });
     return ApiResponseDto.success(shops);
+  }
+
+  @Get('shops/:id')
+  @ApiOperation({ summary: 'Get shop detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const shop = await this.shopRepo.findById(id);
+    if (!shop) throw new NotFoundException('Shop not found');
+    return ApiResponseDto.success(shop);
+  }
+
+  @Patch('shops/:id')
+  @ApiOperation({ summary: 'Update shop details (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateShop(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateShopDto,
+  ): Promise<ApiResponseDto<object>> {
+    const shop = await this.shopsSvc.update(id, dto, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(shop, 'Shop updated');
+  }
+
+  @Delete('shops/:id')
+  @ApiOperation({ summary: 'Soft-delete a shop (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
+    await this.shopsSvc.remove(id, UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(null, 'Shop deleted');
+  }
+
+  @Patch('shops/:id/suspend')
+  @ApiOperation({ summary: 'Suspend a shop (disable without deleting) (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async suspendShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const shop = await this.shopsSvc.suspend(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(shop, 'Shop suspended');
+  }
+
+  @Patch('shops/:id/activate')
+  @ApiOperation({ summary: 'Re-activate a suspended shop (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async activateShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const shop = await this.shopsSvc.activate(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(shop, 'Shop activated');
   }
 
   // ─── User Management ──────────────────────────────────────────────────────
@@ -281,6 +435,17 @@ export class AdminController {
     return ApiResponseDto.success(user);
   }
 
+  @Patch('users/:id')
+  @ApiOperation({ summary: 'Update user profile fields (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateUserDto,
+  ): Promise<ApiResponseDto<object>> {
+    const user = await this.adminUserSvc.updateUser(id, dto);
+    return ApiResponseDto.success(user, 'User updated');
+  }
+
   @Patch('users/:id/suspend')
   @ApiOperation({ summary: 'Suspend a user account (admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
@@ -295,6 +460,14 @@ export class AdminController {
   async activateUser(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
     const user = await this.adminUserSvc.setUserStatus(id, 'ACTIVE');
     return ApiResponseDto.success(user, 'User activated');
+  }
+
+  @Post('users/:id/reset-password')
+  @ApiOperation({ summary: 'Reset user password — generates a temporary password, forces change on next login (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async resetUserPassword(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const result = await this.adminUserSvc.resetUserPassword(id);
+    return ApiResponseDto.success(result, 'Password reset. Share the temporary password with the user.');
   }
 
   // ─── Doctors / Assistants ─────────────────────────────────────────────────
@@ -313,6 +486,15 @@ export class AdminController {
   async allDeliveryPartners(@Query() query: AdminUserQueryDto): Promise<ApiResponseDto<object>> {
     const result = await this.adminUserSvc.listDeliveryPartners(query);
     return ApiResponseDto.success(result);
+  }
+
+  @Get('delivery-partners/:id')
+  @ApiOperation({ summary: 'Get delivery partner detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getDeliveryPartner(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const partner = await this.deliveryPartnerRepo.findById(id);
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    return ApiResponseDto.success(partner);
   }
 
   // ─── Pets Overview ────────────────────────────────────────────────────────
@@ -359,5 +541,245 @@ export class AdminController {
   async broadcast(@Body() dto: BroadcastNotificationDto): Promise<ApiResponseDto<object>> {
     const result = await this.adminUserSvc.broadcastNotification(dto);
     return ApiResponseDto.success(result, `Notification sent to ${result.sent} users`);
+  }
+
+  // ─── Complaints ───────────────────────────────────────────────────────────
+
+  @Get('complaints')
+  @ApiOperation({ summary: 'List all complaints (admin)' })
+  async allComplaints(@Query() query: ComplaintQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.complaintsSvc.findAll(query, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('complaints/:id')
+  @ApiOperation({ summary: 'Get complaint detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getComplaint(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const complaint = await this.complaintsSvc.findOne(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(complaint);
+  }
+
+  @Patch('complaints/:id')
+  @ApiOperation({ summary: 'Update complaint status / add admin notes (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateComplaint(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateComplaintStatusDto,
+  ): Promise<ApiResponseDto<object>> {
+    const complaint = await this.complaintsSvc.updateStatus(id, dto);
+    return ApiResponseDto.success(complaint, 'Complaint updated');
+  }
+
+  // ─── Appointments ─────────────────────────────────────────────────────────
+
+  @Get('appointments')
+  @ApiOperation({ summary: 'List all appointments across all clinics (admin)' })
+  async allAppointments(@Query() query: AppointmentQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.appointmentRepo.findMany({}, query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('appointments/:id')
+  @ApiOperation({ summary: 'Get appointment detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getAppointment(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentRepo.findById(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+    return ApiResponseDto.success(appt);
+  }
+
+  // ─── Reviews Moderation ───────────────────────────────────────────────────
+
+  @Get('reviews')
+  @ApiOperation({ summary: 'List all reviews across all clinics/shops (admin)' })
+  async allReviews(@Query() query: ReviewQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.reviewsSvc.findMany(query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Delete('reviews/:id')
+  @ApiOperation({ summary: 'Delete a review (admin moderation)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteReview(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
+    await this.reviewsSvc.remove(id, id, UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(null, 'Review deleted');
+  }
+
+  // ─── Doctor Detail ────────────────────────────────────────────────────────
+
+  @Get('doctors/:id')
+  @ApiOperation({ summary: 'Get doctor detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getDoctor(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const doctor = await this.doctorRepo.findById(id);
+    if (!doctor) throw new NotFoundException('Doctor not found');
+    return ApiResponseDto.success(doctor);
+  }
+
+  // ─── Appointment Cancel ───────────────────────────────────────────────────
+
+  @Patch('appointments/:id/cancel')
+  @ApiOperation({ summary: 'Cancel an appointment (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async cancelAppointment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CancelAppointmentDto,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentRepo.findRaw(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+    const terminal: string[] = ['CANCELLED', 'COMPLETED', 'NO_SHOW'];
+    if (terminal.includes(appt.status)) {
+      throw new NotFoundException(`Cannot cancel appointment with status ${appt.status}`);
+    }
+    const updated = await this.appointmentRepo.update(id, {
+      status: AppointmentStatus.CANCELLED,
+      cancellationReason: dto.reason,
+      updatedBy: 'admin',
+    });
+    return ApiResponseDto.success(updated, 'Appointment cancelled');
+  }
+
+  // ─── Order Status Override ────────────────────────────────────────────────
+
+  @Patch('orders/:id/status')
+  @ApiOperation({ summary: 'Override order status (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateOrderStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminOrderStatusDto,
+  ): Promise<ApiResponseDto<object>> {
+    const order = await this.orderRepo.findById(id);
+    if (!order) throw new NotFoundException('Order not found');
+    const updated = await this.orderRepo.updateStatus(id, dto.status, { updatedBy: 'admin' });
+    return ApiResponseDto.success(updated, 'Order status updated');
+  }
+
+  // ─── Products ─────────────────────────────────────────────────────────────
+
+  @Get('products')
+  @ApiOperation({ summary: 'List all products across all shops (admin)' })
+  async allProducts(@Query() query: ProductQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.productsSvc.findMany(query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('products/:id')
+  @ApiOperation({ summary: 'Get product detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getProduct(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const product = await this.productsSvc.findOne(id);
+    return ApiResponseDto.success(product);
+  }
+
+  // ─── Verification Documents ───────────────────────────────────────────────
+
+  @Get('verification-docs/clinic/:clinicId')
+  @ApiOperation({ summary: 'Get all verification documents submitted by a clinic (admin)' })
+  @ApiParam({ name: 'clinicId', type: 'string', format: 'uuid' })
+  async getClinicDocs(@Param('clinicId', ParseUUIDPipe) clinicId: string): Promise<ApiResponseDto<object>> {
+    const docs = await this.verificationDocsSvc.getDocsForClinicAdmin(clinicId);
+    return ApiResponseDto.success(docs);
+  }
+
+  @Get('verification-docs/shop/:shopId')
+  @ApiOperation({ summary: 'Get all verification documents submitted by a shop (admin)' })
+  @ApiParam({ name: 'shopId', type: 'string', format: 'uuid' })
+  async getShopDocs(@Param('shopId', ParseUUIDPipe) shopId: string): Promise<ApiResponseDto<object>> {
+    const docs = await this.verificationDocsSvc.getDocsForShopAdmin(shopId);
+    return ApiResponseDto.success(docs);
+  }
+
+  @Patch('verification-docs/:id/review')
+  @ApiOperation({ summary: 'Approve or reject a specific verification document (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async reviewDoc(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReviewDocDto,
+  ): Promise<ApiResponseDto<object>> {
+    const doc = await this.verificationDocsSvc.reviewDoc(id, dto, 'admin');
+    return ApiResponseDto.success(doc, `Document ${dto.action}d`);
+  }
+
+  // ─── Service Bookings ─────────────────────────────────────────────────────
+
+  @Get('service-bookings')
+  @ApiOperation({ summary: 'List all service bookings across all clinics (admin)' })
+  async allServiceBookings(@Query() query: BookingQueryDto & { clinicId?: string }): Promise<ApiResponseDto<object>> {
+    const result = await this.bookingRepo.findAll(query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('service-bookings/:id')
+  @ApiOperation({ summary: 'Get service booking detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getServiceBooking(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Service booking not found');
+    return ApiResponseDto.success(booking);
+  }
+
+  // ─── Pet Services (admin) ─────────────────────────────────────────────────
+
+  @Get('services')
+  @ApiOperation({ summary: 'List all pet services across all clinics (admin)' })
+  async allServices(@Query() query: ServiceQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.serviceRepo.findAllAdmin(query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('services/:id')
+  @ApiOperation({ summary: 'Get pet service detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getService(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const service = await this.serviceRepo.findById(id);
+    if (!service) throw new NotFoundException('Service not found');
+    return ApiResponseDto.success(service);
+  }
+
+  @Post('services')
+  @ApiOperation({ summary: 'Create a pet service for a clinic (admin)' })
+  async createService(@Body() dto: AdminCreateServiceDto): Promise<ApiResponseDto<object>> {
+    const service = await this.serviceRepo.create({
+      name: dto.name,
+      description: dto.description,
+      category: dto.category,
+      price: dto.basePrice ?? dto.price,
+      duration: dto.duration,
+      maxPetsPerSlot: dto.maxPetsPerSlot ?? 1,
+      clinic: { connect: { id: dto.clinicId } },
+      createdBy: 'admin',
+    });
+    return ApiResponseDto.success(service, 'Service created');
+  }
+
+  @Patch('services/:id')
+  @ApiOperation({ summary: 'Update a pet service (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateServiceDto,
+  ): Promise<ApiResponseDto<object>> {
+    const service = await this.serviceRepo.findById(id);
+    if (!service) throw new NotFoundException('Service not found');
+    const updated = await this.serviceRepo.update(id, {
+      ...(dto.name !== undefined && { name: dto.name }),
+      ...(dto.description !== undefined && { description: dto.description }),
+      ...(dto.category !== undefined && { category: dto.category }),
+      ...((dto.price !== undefined || dto.basePrice !== undefined) && { price: dto.basePrice ?? dto.price }),
+      ...(dto.duration !== undefined && { duration: dto.duration }),
+      ...(dto.maxPetsPerSlot !== undefined && { maxPetsPerSlot: dto.maxPetsPerSlot }),
+    });
+    return ApiResponseDto.success(updated, 'Service updated');
+  }
+
+  @Delete('services/:id')
+  @ApiOperation({ summary: 'Soft-delete a pet service (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteService(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
+    const service = await this.serviceRepo.findById(id);
+    if (!service) throw new NotFoundException('Service not found');
+    await this.serviceRepo.softDelete(id);
+    return ApiResponseDto.success(null, 'Service deleted');
   }
 }

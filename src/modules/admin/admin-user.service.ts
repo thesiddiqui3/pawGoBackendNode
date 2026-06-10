@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../database/prisma.service';
 import { buildPaginatedResponse, getPaginationMeta } from '../../common/utils/pagination.helper';
 
@@ -94,6 +95,39 @@ export class AdminUserService {
       data: { status: status as any },
     });
     return { updated: ids.length, status };
+  }
+
+  async updateUser(id: string, data: { firstName?: string; lastName?: string; phone?: string; email?: string }) {
+    const user = await this.prisma.user.findFirst({ where: { id, deletedAt: null } });
+    if (!user) throw new NotFoundException('User not found');
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        ...(data.firstName !== undefined && { firstName: data.firstName }),
+        ...(data.lastName !== undefined && { lastName: data.lastName }),
+        ...(data.phone !== undefined && { phone: data.phone }),
+        ...(data.email !== undefined && { email: data.email }),
+      },
+      select: { id: true, firstName: true, lastName: true, email: true, phone: true, role: true, status: true },
+    });
+  }
+
+  async resetUserPassword(id: string): Promise<{ temporaryPassword: string }> {
+    const user = await this.prisma.user.findFirst({ where: { id, deletedAt: null } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$!';
+    let temporaryPassword = 'A1@';
+    for (let i = 0; i < 7; i++) temporaryPassword += chars[Math.floor(Math.random() * chars.length)];
+    temporaryPassword = temporaryPassword.split('').sort(() => Math.random() - 0.5).join('');
+
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash, mustChangePassword: true },
+    });
+
+    return { temporaryPassword };
   }
 
   // ─── Doctors ──────────────────────────────────────────────────────────────

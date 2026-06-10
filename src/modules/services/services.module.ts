@@ -7,6 +7,6 @@ import { ServicesService } from './services.service';
 @Module({
   controllers: [ServicesController, BookingsController],
   providers: [ServicesService, ServiceRepository, BookingRepository],
-  exports: [ServicesService],
+  exports: [ServicesService, BookingRepository, ServiceRepository],
 })
 export class ServicesModule {}

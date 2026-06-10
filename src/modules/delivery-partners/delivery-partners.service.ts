@@ -147,6 +147,17 @@ export class DeliveryPartnersService {
     });
   }
 
+  async activate(id: string) {
+    const partner = await this.partnerRepository.findById(id);
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    return this.partnerRepository.update(id, {
+      isApproved: true,
+      suspendedAt: null,
+      suspendedBy: null,
+      suspendReason: null,
+    });
+  }
+
   async getAdminDashboard() {
     const [total, active, online] = await Promise.all([
       this.partnerRepository.findMany({}, { page: 1, limit: 1 }),

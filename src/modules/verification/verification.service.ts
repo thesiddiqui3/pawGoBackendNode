@@ -2,11 +2,13 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../database/prisma.service';
 import { buildPaginatedResponse, getPaginationMeta } from '../../common/utils/pagination.helper';
 
-export type VerifyAction = 'approve' | 'reject';
+export type VerifyAction = 'approve' | 'reject' | 'request_docs';
 
 interface VerifyDto {
   action: VerifyAction;
   reason?: string;
+  note?: string;
+  adminNotes?: string;
 }
 
 interface PageQuery { page?: number; pageSize?: number }
@@ -28,6 +30,7 @@ export class VerificationService {
           id: true, name: true, slug: true, city: true, state: true,
           phone: true, email: true, logoUrl: true,
           isVerified: true, isActive: true, createdAt: true, createdBy: true,
+          verificationNote: true,
         },
       }),
       this.prisma.clinic.count({ where }),
@@ -58,15 +61,23 @@ export class VerificationService {
     const clinic = await this.prisma.clinic.findFirst({ where: { id, deletedAt: null } });
     if (!clinic) throw new NotFoundException('Clinic not found');
 
+    const note = dto.note ?? dto.adminNotes ?? dto.reason ?? null;
+
     if (dto.action === 'approve') {
       return this.prisma.clinic.update({
         where: { id },
-        data: { isVerified: true, isActive: true, updatedBy: adminId },
+        data: { isVerified: true, isActive: true, verificationNote: null, updatedBy: adminId },
+      });
+    } else if (dto.action === 'request_docs') {
+      // Keep clinic active (owner can still log in) but not verified; store note for owner
+      return this.prisma.clinic.update({
+        where: { id },
+        data: { isVerified: false, isActive: true, verificationNote: note, updatedBy: adminId },
       });
     } else {
       return this.prisma.clinic.update({
         where: { id },
-        data: { isVerified: false, isActive: false, updatedBy: adminId },
+        data: { isVerified: false, isActive: false, verificationNote: note, updatedBy: adminId },
       });
     }
   }
@@ -84,6 +95,7 @@ export class VerificationService {
           id: true, name: true, slug: true, city: true, state: true,
           phone: true, email: true, logoUrl: true,
           isVerified: true, isActive: true, createdAt: true, createdBy: true,
+          verificationNote: true,
           owner: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       }),
@@ -108,13 +120,24 @@ export class VerificationService {
     const shop = await this.prisma.shop.findFirst({ where: { id, deletedAt: null } });
     if (!shop) throw new NotFoundException('Shop not found');
 
-    return this.prisma.shop.update({
-      where: { id },
-      data: {
-        isVerified: dto.action === 'approve',
-        isActive: dto.action === 'approve',
-      },
-    });
+    const note = dto.note ?? dto.adminNotes ?? dto.reason ?? null;
+
+    if (dto.action === 'approve') {
+      return this.prisma.shop.update({
+        where: { id },
+        data: { isVerified: true, isActive: true, verificationNote: null },
+      });
+    } else if (dto.action === 'request_docs') {
+      return this.prisma.shop.update({
+        where: { id },
+        data: { isVerified: false, isActive: true, verificationNote: note },
+      });
+    } else {
+      return this.prisma.shop.update({
+        where: { id },
+        data: { isVerified: false, isActive: false, verificationNote: note },
+      });
+    }
   }
 
   // ─── KYC (Delivery Partner) ───────────────────────────────────────────────

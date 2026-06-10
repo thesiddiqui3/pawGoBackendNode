@@ -135,20 +135,28 @@ export class NotificationsService {
   // ─── Admin: broadcast ─────────────────────────────────────────────────────
 
   async broadcast(dto: BroadcastNotificationDto, adminId: string) {
-    const roleMap: Record<BroadcastTarget, PrismaUserRole | null> = {
-      [BroadcastTarget.ALL_USERS]: null,
-      [BroadcastTarget.PET_OWNERS]: PrismaUserRole.PET_OWNER,
-      [BroadcastTarget.DOCTORS]: PrismaUserRole.ASSISTANT,
-      [BroadcastTarget.SHOP_OWNERS]: PrismaUserRole.SHOP_OWNER,
-      [BroadcastTarget.DELIVERY_PARTNERS]: PrismaUserRole.DELIVERY_PARTNER,
-    };
+    // Build role filter — support both legacy `target` enum and new `roles[]` array
+    let roleFilter: { role?: { in: PrismaUserRole[] } | PrismaUserRole } | undefined;
 
-    const role = roleMap[dto.target];
+    if (dto.roles?.length) {
+      roleFilter = { role: { in: dto.roles as PrismaUserRole[] } };
+    } else if (dto.target) {
+      const roleMap: Record<BroadcastTarget, PrismaUserRole | null> = {
+        [BroadcastTarget.ALL_USERS]: null,
+        [BroadcastTarget.PET_OWNERS]: PrismaUserRole.PET_OWNER,
+        [BroadcastTarget.DOCTORS]: PrismaUserRole.ASSISTANT,
+        [BroadcastTarget.SHOP_OWNERS]: PrismaUserRole.SHOP_OWNER,
+        [BroadcastTarget.DELIVERY_PARTNERS]: PrismaUserRole.DELIVERY_PARTNER,
+      };
+      const single = roleMap[dto.target];
+      if (single) roleFilter = { role: single };
+    }
+
     const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
         status: 'ACTIVE',
-        ...(role ? { role } : {}),
+        ...roleFilter,
       },
       select: { id: true },
     });

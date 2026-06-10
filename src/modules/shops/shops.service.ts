@@ -78,6 +78,13 @@ export class ShopsService {
     return this.shopRepository.setActive(id, true);
   }
 
+  async remove(id: string, role: string): Promise<void> {
+    if (role !== UserRole.SUPER_ADMIN) throw new ForbiddenException('Only admins can delete shops');
+    await this.findOne(id);
+    await this.shopRepository.softDelete(id);
+    this.logger.log(`Shop soft-deleted: ${id}`);
+  }
+
   async findByIdOrThrow(id: string): Promise<Shop> {
     return this.findOne(id);
   }

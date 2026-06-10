@@ -66,6 +66,23 @@ export class ServiceRepository {
     return buildPaginatedResponse(items, total, page, pageSize);
   }
 
+  async findAllAdmin(query: ServiceQueryDto) {
+    const { skip, take, page, pageSize } = getPaginationMeta(query);
+    const where: Prisma.PetServiceWhereInput = {
+      deletedAt: null,
+      ...(query.clinicId ? { clinicId: query.clinicId } : {}),
+      ...(query.category ? { category: query.category } : {}),
+      ...(query.search
+        ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { description: { contains: query.search, mode: 'insensitive' } }] }
+        : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.petService.findMany({ where, select: SERVICE_SELECT, skip, take, orderBy: { createdAt: 'desc' } }),
+      this.prisma.petService.count({ where }),
+    ]);
+    return buildPaginatedResponse(items, total, page, pageSize);
+  }
+
   async findByClinic(clinicId: string, includeInactive = false) {
     return this.prisma.petService.findMany({
       where: { clinicId, deletedAt: null, ...(!includeInactive ? { isActive: true } : {}) },

@@ -68,6 +68,19 @@ export class BookingRepository {
     return buildPaginatedResponse(items, total, page, pageSize);
   }
 
+  async findAll(query: BookingQueryDto & { clinicId?: string }) {
+    const { skip, take, page, pageSize } = getPaginationMeta(query);
+    const where: Prisma.ServiceBookingWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.clinicId ? { service: { clinicId: query.clinicId } } : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.serviceBooking.findMany({ where, select: BOOKING_SELECT, skip, take, orderBy: { scheduledAt: 'desc' } }),
+      this.prisma.serviceBooking.count({ where }),
+    ]);
+    return buildPaginatedResponse(items, total, page, pageSize);
+  }
+
   async countSlotConflicts(serviceId: string, scheduledAt: Date, maxPetsPerSlot: number, excludeId?: string): Promise<number> {
     return this.prisma.serviceBooking.count({
       where: {

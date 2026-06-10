@@ -41,6 +41,19 @@ export class SystemSettingsRepository {
     return this.prisma.systemSetting.delete({ where: { key } });
   }
 
+  async deleteCamelCaseOrphans() {
+    // Remove camelCase keys that have a snake_case twin — leftover from before key normalization
+    const all = await this.prisma.systemSetting.findMany({ select: { key: true } });
+    const snakeKeys = new Set(all.map((s) => s.key).filter((k) => !/[A-Z]/.test(k)));
+    const toDelete = all
+      .filter((s) => /[A-Z]/.test(s.key))
+      .filter((s) => snakeKeys.has(s.key.replace(/([A-Z])/g, (c) => `_${c.toLowerCase()}`)))
+      .map((s) => s.key);
+    if (toDelete.length > 0) {
+      await this.prisma.systemSetting.deleteMany({ where: { key: { in: toDelete } } });
+    }
+  }
+
   // ─── Holidays ─────────────────────────────────────────────────────────────
 
   async findAllHolidays() {

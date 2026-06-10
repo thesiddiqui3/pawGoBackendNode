@@ -4,6 +4,14 @@ import { CreateHolidayDto, UpdateHolidayDto } from './dto/holiday.dto';
 import { CreateSettingDto, UpdateSettingDto } from './dto/setting.dto';
 import { SystemSettingsRepository } from './system-settings.repository';
 
+function toSnakeCase(key: string): string {
+  return key.replace(/([A-Z])/g, (c) => `_${c.toLowerCase()}`).replace(/^_/, '');
+}
+
+function toCamelCase(key: string): string {
+  return key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
 @Injectable()
 export class SystemSettingsService {
   constructor(private readonly repo: SystemSettingsRepository) {}
@@ -11,17 +19,29 @@ export class SystemSettingsService {
   // ─── Settings ─────────────────────────────────────────────────────────────
 
   async getSettings(category?: string) {
-    return this.repo.findAllSettings(category);
+    const all = await this.repo.findAllSettings(category);
+    // Deduplicate by camelCase key (prefer snake_case rows as canonical),
+    // then return all with keys transformed to camelCase so the frontend can read them.
+    const seen = new Map<string, typeof all[0]>();
+    for (const s of all) {
+      const camelKey = toCamelCase(s.key);
+      if (!seen.has(camelKey) || s.key === toSnakeCase(s.key)) {
+        seen.set(camelKey, { ...s, key: camelKey });
+      }
+    }
+    return Array.from(seen.values());
   }
 
   async getSetting(key: string) {
-    const setting = await this.repo.findByKey(key);
+    const normalizedKey = toSnakeCase(key);
+    const setting = (await this.repo.findByKey(normalizedKey)) ?? (await this.repo.findByKey(key));
     if (!setting) throw new NotFoundException(`Setting '${key}' not found`);
     return setting;
   }
 
   async createSetting(dto: CreateSettingDto, adminId: string) {
-    return this.repo.upsertSetting(dto.key, dto.value, {
+    const key = toSnakeCase(dto.key);
+    return this.repo.upsertSetting(key, dto.value, {
       description: dto.description,
       category: dto.category ?? 'general',
       isPublic: dto.isPublic ?? false,
@@ -30,18 +50,33 @@ export class SystemSettingsService {
   }
 
   async updateSetting(key: string, dto: UpdateSettingDto, adminId: string) {
-    await this.getSetting(key);
-    return this.repo.updateByKey(key, {
-      value: dto.value,
+    const snakeKey = toSnakeCase(key);
+    const meta = {
       description: dto.description,
-      isPublic: dto.isPublic,
+      category: dto.category ?? 'general',
+      isPublic: dto.isPublic ?? false,
       updatedBy: adminId,
-    });
+    };
+
+    // Always write to the snake_case canonical key
+    const result = await this.repo.upsertSetting(snakeKey, dto.value, meta);
+
+    // Also update the camelCase row if it exists, so the frontend reads the fresh value
+    if (snakeKey !== key) {
+      const camelExists = await this.repo.findByKey(key);
+      if (camelExists) {
+        await this.repo.upsertSetting(key, dto.value, meta);
+      }
+    }
+
+    return result;
   }
 
   async deleteSetting(key: string) {
-    await this.getSetting(key);
-    return this.repo.deleteSetting(key);
+    const normalizedKey = toSnakeCase(key);
+    const existing = (await this.repo.findByKey(normalizedKey)) ?? (await this.repo.findByKey(key));
+    if (!existing) throw new NotFoundException(`Setting '${key}' not found`);
+    return this.repo.deleteSetting(existing.key);
   }
 
   // ─── Holidays ─────────────────────────────────────────────────────────────

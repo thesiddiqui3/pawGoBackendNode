@@ -86,4 +86,10 @@ export class AdminDeliveryPartnersController {
   suspend(@Param('id', ParseUUIDPipe) id: string, @Body('reason') reason: string, @CurrentUser() user: JwtPayload) {
     return this.service.suspend(id, user.sub, reason);
   }
+
+  @Patch(':id/activate')
+  @Roles(UserRole.SUPER_ADMIN)
+  activate(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.activate(id);
+  }
 }

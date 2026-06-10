@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  Allow,
   IsBoolean,
   IsIn,
   IsNotEmpty,
@@ -22,6 +23,7 @@ export class CreateSettingDto {
   key!: string;
 
   @ApiProperty({ description: 'Any JSON-serializable value' })
+  @Allow()
   value!: unknown;
 
   @ApiPropertyOptional()
@@ -42,12 +44,18 @@ export class CreateSettingDto {
 
 export class UpdateSettingDto {
   @ApiProperty({ description: 'Any JSON-serializable value' })
+  @Allow()
   value!: unknown;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ enum: SETTING_CATEGORIES })
+  @IsOptional()
+  @IsIn(SETTING_CATEGORIES)
+  category?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -55,12 +55,16 @@ export class ReviewRepository {
     });
   }
 
-  async findMany(query: ReviewQueryDto): Promise<PaginatedResponseDto<Review>> {
+  async findMany(query: ReviewQueryDto): Promise<PaginatedResponseDto<any>> {
     const { skip, take, page, pageSize } = getPaginationMeta(query);
+
+    // clinicId/shopId are convenience aliases for targetId
+    const effectiveTargetId = query.targetId ?? query.clinicId ?? query.shopId;
 
     const where: Prisma.ReviewWhereInput = {
       ...(query.targetType && { targetType: query.targetType }),
-      ...(query.targetId && { targetId: query.targetId }),
+      ...(effectiveTargetId && { targetId: effectiveTargetId }),
+      ...(query.rating !== undefined && { rating: query.rating }),
     };
 
     const [items, total] = await this.prisma.$transaction([
@@ -69,12 +73,24 @@ export class ReviewRepository {
         skip,
         take,
         orderBy: { createdAt: 'desc' },
-        include: { user: { select: USER_SELECT } },
+        include: {
+          user: { select: USER_SELECT },
+          clinic: { select: { id: true, name: true } },
+          doctor: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
+        },
       }),
       this.prisma.review.count({ where }),
     ]);
 
-    return buildPaginatedResponse(items, total, page, pageSize);
+    // Flatten target name into a consistent `targetName` field
+    const mapped = items.map((r: any) => ({
+      ...r,
+      targetName: r.clinic?.name
+        ?? (r.doctor ? `Dr. ${r.doctor.user.firstName} ${r.doctor.user.lastName}` : null)
+        ?? r.targetId,
+    }));
+
+    return buildPaginatedResponse(mapped, total, page, pageSize);
   }
 
   async update(id: string, dto: UpdateReviewDto): Promise<Review> {

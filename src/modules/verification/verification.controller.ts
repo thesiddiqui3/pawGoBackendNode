@@ -30,13 +30,13 @@ class PageQueryDto {
 }
 
 class VerifyActionDto {
-  @ApiProperty({ enum: ['approve', 'reject'] })
+  @ApiProperty({ enum: ['approve', 'reject', 'request_docs'] })
   @IsOptional()
-  @IsEnum(['approve', 'reject'])
+  @IsEnum(['approve', 'reject', 'request_docs'])
   action?: VerifyAction;
 
-  // Frontend may send status:"approved"/"rejected" instead of action:"approve"/"reject"
-  @ApiPropertyOptional({ enum: ['approved', 'rejected'] })
+  // Frontend may send status:"approved"/"rejected"/"request_docs" instead of action field
+  @ApiPropertyOptional({ enum: ['approved', 'rejected', 'request_docs'] })
   @IsOptional()
   @IsString()
   status?: string;
@@ -61,6 +61,7 @@ class VerifyActionDto {
     if (this.action) return this.action;
     if (this.status === 'approved') return 'approve';
     if (this.status === 'rejected') return 'reject';
+    if (this.status === 'request_docs') return 'request_docs';
     throw new Error('Either action or status must be provided');
   }
 }

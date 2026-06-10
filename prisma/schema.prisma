@@ -382,6 +382,7 @@ model Clinic {
   isActive             Boolean @default(true)
   isVerified           Boolean @default(false)
   documentsSubmitted   Boolean @default(false)
+  verificationNote     String?
 
   createdBy   String
   updatedBy   String?
@@ -820,6 +821,7 @@ model Shop {
   isActive             Boolean  @default(true)
   isVerified           Boolean  @default(false)
   documentsSubmitted   Boolean  @default(false)
+  verificationNote     String?
   rating               Float    @default(0)
   totalReviews         Int      @default(0)
   createdBy            String
