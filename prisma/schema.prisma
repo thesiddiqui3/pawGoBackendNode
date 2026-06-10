@@ -1,0 +1,1463 @@
+// PawGo — Prisma Schema
+// Phase 3: Clinics, Doctors & Reviews
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  PET_OWNER
+  CLINIC_OWNER
+  ASSISTANT
+  SHOP_OWNER
+  DELIVERY_PARTNER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum PetSpecies {
+  DOG
+  CAT
+  BIRD
+  RABBIT
+  FISH
+  HAMSTER
+  OTHER
+}
+
+enum PetGender {
+  MALE
+  FEMALE
+  UNKNOWN
+}
+
+enum ClinicService {
+  VACCINATION
+  SURGERY
+  CONSULTATION
+  EMERGENCY
+  GROOMING
+  BOARDING
+  DIAGNOSTICS
+  PET_PHARMACY
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum DoctorSpecialization {
+  GENERAL_PRACTICE
+  SURGERY
+  DERMATOLOGY
+  CARDIOLOGY
+  NEUROLOGY
+  ONCOLOGY
+  OPHTHALMOLOGY
+  DENTISTRY
+  ORTHOPEDICS
+  INTERNAL_MEDICINE
+  EMERGENCY
+  NUTRITION
+  BEHAVIOR
+  EXOTIC_ANIMALS
+}
+
+enum ReviewTargetType {
+  CLINIC
+  ASSISTANT
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AttachmentType {
+  PDF
+  JPG
+  JPEG
+  PNG
+  WEBP
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  CANCELLED
+}
+
+enum ReminderType {
+  THIRTY_DAYS
+  FIFTEEN_DAYS
+  SEVEN_DAYS
+  DUE_DATE
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+enum ComplaintCategory {
+  ORDER
+  DELIVERY
+  CLINIC
+  SHOP
+  APP
+  OTHER
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  SUSPEND
+  ACTIVATE
+  BROADCAST
+  VERIFY
+}
+
+enum ServiceCategory {
+  GROOMING
+  SPA
+  TRAINING
+  BOARDING
+  DAYCARE
+  DENTAL
+  BATH
+  NAIL_TRIMMING
+  OTHER
+}
+
+enum ServiceBookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum VerificationDocType {
+  REGISTRATION_CERTIFICATE
+  GST_CERTIFICATE
+  PAN_CARD
+  AADHAAR
+  SHOP_ACT_LICENSE
+  DRUG_LICENSE
+  VETERINARY_LICENSE
+  OWNER_PHOTO_ID
+  OTHER
+}
+
+enum VerificationDocStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  phone           String?    @unique
+  passwordHash    String
+  role            UserRole   @default(PET_OWNER)
+  status          UserStatus @default(PENDING_VERIFICATION)
+  firstName       String
+  lastName        String
+  username        String?    @unique
+  gender          Gender?
+
+  avatarUrl       String?
+  avatarPublicId  String?
+
+  isEmailVerified    Boolean  @default(false)
+  isPhoneVerified    Boolean  @default(false)
+  mustChangePassword Boolean  @default(false)
+  lastLoginAt        DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  refreshTokens        RefreshToken[]
+  passwordResetTokens  PasswordResetToken[]
+  emailVerifications   EmailVerification[]
+  pets                 Pet[]
+  doctorProfile        Doctor?
+  reviews              Review[]
+  appointments         Appointment[]
+  vaccinationReminders VaccinationReminder[]
+  shop                 Shop?           @relation("ShopOwner")
+  cart                 Cart?
+  addresses            Address[]
+  orders               Order[]         @relation("CustomerOrders")
+  deliveryPartner      DeliveryPartner?
+  deliveryRatings      DeliveryRating[] @relation("CustomerDeliveryRatings")
+  notifications        Notification[]   @relation("UserNotifications")
+  deviceTokens         DeviceToken[]    @relation("UserDeviceTokens")
+  notificationPreference NotificationPreference? @relation("UserNotificationPreference")
+  serviceBookings        ServiceBooking[]        @relation("CustomerServiceBookings")
+  complaints             Complaint[]             @relation("UserComplaints")
+
+  @@index([email])
+  @@index([phone])
+  @@index([username])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth tokens
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerification {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("email_verifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pet
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Pet {
+  id              String     @id @default(uuid())
+  ownerId         String
+  owner           User       @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  name            String
+  species         PetSpecies
+  breed           String
+  gender          PetGender  @default(UNKNOWN)
+  dateOfBirth     DateTime?
+  weight          Float?
+  color           String?
+  microchipNumber String?    @unique
+  notes           String?
+  photoUrl        String?
+  photoPublicId   String?
+  isActive        Boolean    @default(true)
+  createdBy       String
+  updatedBy       String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  appointments         Appointment[]
+  medicalRecords       MedicalRecord[]
+  vaccinations         Vaccination[]
+  vaccinationReminders VaccinationReminder[]
+  gallery              PetGallery[]
+  serviceBookings      ServiceBooking[]
+
+  @@index([ownerId])
+  @@index([species])
+  @@index([breed])
+  @@index([name])
+  @@index([isActive])
+  @@index([createdAt])
+  @@map("pets")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clinic
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Clinic {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+
+  phone       String
+  email       String
+
+  // Address
+  address     String
+  city        String
+  state       String
+  country     String          @default("India")
+  pincode     String?
+
+  // Geo coordinates (Haversine queries via raw SQL)
+  latitude    Float?
+  longitude   Float?
+
+  // Media
+  logoUrl        String?
+  logoPublicId   String?
+  bannerUrl      String?
+  bannerPublicId String?
+
+  services    ClinicService[]
+
+  // Aggregated stats (updated on every review change)
+  rating       Float @default(0)
+  totalReviews Int   @default(0)
+
+  licenseNumber        String?
+
+  isActive             Boolean @default(true)
+  isVerified           Boolean @default(false)
+  documentsSubmitted   Boolean @default(false)
+
+  createdBy   String
+  updatedBy   String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  workingHours        WorkingHours[]
+  doctors             Doctor[]
+  reviews             Review[]
+  appointments        Appointment[]
+  medicalRecords      MedicalRecord[]
+  vaccinations        Vaccination[]
+  petServices         PetService[]
+  verificationDocs    VerificationDocument[] @relation("ClinicDocs")
+
+  @@index([city])
+  @@index([state])
+  @@index([rating])
+  @@index([isVerified])
+  @@index([isActive])
+  @@map("clinics")
+}
+
+model WorkingHours {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  day         DayOfWeek
+  startTime   String    // "09:00"
+  endTime     String    // "17:00"
+  isAvailable Boolean   @default(true)
+
+  @@unique([clinicId, day])
+  @@map("working_hours")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Doctor
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Doctor {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicId        String?
+  clinic          Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  specializations DoctorSpecialization[]
+  experienceYears Int      @default(0)
+  consultationFee Float?
+  bio             String?
+  languages       String[]
+
+  photoUrl        String?
+  photoPublicId   String?
+
+  // Aggregated stats
+  rating          Float @default(0)
+  totalReviews    Int   @default(0)
+
+  isActive    Boolean @default(true)
+  isVerified  Boolean @default(false)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  availability      DoctorAvailability[]
+  education         DoctorEducation[]
+  certifications    DoctorCertification[]
+  reviews           Review[]
+  appointments      Appointment[]
+  medicalRecords    MedicalRecord[]
+  vaccinations      Vaccination[]
+  appointmentNotes  AppointmentNote[]
+
+  @@index([clinicId])
+  @@index([rating])
+  @@index([isVerified])
+  @@map("doctors")
+}
+
+model DoctorAvailability {
+  id          String    @id @default(uuid())
+  doctorId    String
+  doctor      Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  day         DayOfWeek
+  startTime   String
+  endTime     String
+  isAvailable Boolean   @default(true)
+
+  @@unique([doctorId, day])
+  @@map("doctor_availability")
+}
+
+model DoctorEducation {
+  id          String @id @default(uuid())
+  doctorId    String
+  doctor      Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  degree      String
+  institution String
+  year        Int?
+
+  @@map("doctor_education")
+}
+
+model DoctorCertification {
+  id        String @id @default(uuid())
+  doctorId  String
+  doctor    Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  name      String
+  issuedBy  String?
+  year      Int?
+
+  @@map("doctor_certifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id         String           @id @default(uuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetType ReviewTargetType
+  targetId   String           // clinicId or doctorId
+  rating     Int              // 1–5
+  comment    String?
+
+  // Nullable FK references for easy joins
+  clinicId   String?
+  clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctorId   String?
+  doctor     Doctor?  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // One review per user per target
+  @@unique([userId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@index([userId])
+  @@map("reviews")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Appointment
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AppointmentCounter {
+  year Int @id
+  seq  Int @default(0)
+
+  @@map("appointment_counters")
+}
+
+model Appointment {
+  id                String            @id @default(uuid())
+  appointmentNumber String            @unique
+
+  petId   String
+  pet     Pet    @relation(fields: [petId], references: [id], onDelete: Restrict)
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  doctorId String
+  doctor   Doctor @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  appointmentDate DateTime          // stored as UTC date (time part ignored)
+  startTime       String            // "10:00"
+  endTime         String            // "10:30"
+
+  reason             String
+  notes              String?
+  status             AppointmentStatus @default(PENDING)
+  cancellationReason String?
+
+  rescheduledFromId String?
+  rescheduledFrom   Appointment?  @relation("RescheduledFrom", fields: [rescheduledFromId], references: [id], onDelete: SetNull)
+  rescheduledTo     Appointment[] @relation("RescheduledFrom")
+  medicalRecord     MedicalRecord?
+  appointmentNote   AppointmentNote?
+
+  slotDurationMinutes Int @default(30)
+
+  createdBy String
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Prevent double-booking: one appointment per doctor per date+time slot
+  @@unique([doctorId, appointmentDate, startTime])
+  @@index([ownerId])
+  @@index([petId])
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([status])
+  @@index([appointmentDate])
+  @@index([appointmentNumber])
+  @@index([doctorId, appointmentDate])
+  @@map("appointments")
+}
+
+model AppointmentNote {
+  id            String      @id @default(uuid())
+  appointmentId String      @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctorId      String
+  doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  diagnosis        String?
+  treatment        String?
+  medications      String[]
+  followUpRequired Boolean  @default(false)
+  followUpDate     DateTime?
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([doctorId])
+  @@map("appointment_notes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Medical Records
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MedicalRecord {
+  id            String      @id @default(uuid())
+  petId         String
+  pet           Pet         @relation(fields: [petId], references: [id], onDelete: Restrict)
+  doctorId      String
+  doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  clinicId      String
+  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  appointmentId String?     @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  visitDate      DateTime
+  chiefComplaint String
+  symptoms       String[]
+  diagnosis      String[]
+  treatmentPlan  String?
+  notes          String?
+  followUpDate   DateTime?
+
+  prescriptions Prescription[]
+  attachments   MedicalAttachment[]
+
+  createdBy String
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([petId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([visitDate])
+  @@map("medical_records")
+}
+
+model Prescription {
+  id           String        @id @default(uuid())
+  recordId     String
+  record       MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  medicineName String
+  dosage       String
+  frequency    String
+  duration     String
+  instructions String?
+
+  @@index([recordId])
+  @@map("prescriptions")
+}
+
+model MedicalAttachment {
+  id       String         @id @default(uuid())
+  recordId String
+  record   MedicalRecord  @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  url      String
+  publicId String
+  fileType AttachmentType
+  fileName String?
+
+  createdAt DateTime @default(now())
+
+  @@index([recordId])
+  @@map("medical_attachments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vaccinations
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Vaccination {
+  id               String    @id @default(uuid())
+  petId            String
+  pet              Pet       @relation(fields: [petId], references: [id], onDelete: Restrict)
+  vaccineName      String
+  manufacturer     String?
+  batchNumber      String?
+  dateAdministered DateTime
+  nextDueDate      DateTime?
+
+  doctorId String?
+  doctor   Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  notes String?
+
+  certificateUrl      String?
+  certificatePublicId String?
+
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reminders VaccinationReminder[]
+
+  @@index([petId])
+  @@index([nextDueDate])
+  @@index([vaccineName])
+  @@map("vaccinations")
+}
+
+model PetGallery {
+  id        String   @id @default(uuid())
+  petId     String
+  pet       Pet      @relation(fields: [petId], references: [id], onDelete: Cascade)
+  imageUrl  String
+  publicId  String
+  caption   String?
+  uploadedBy String
+  uploadedAt DateTime @default(now())
+
+  @@index([petId])
+  @@map("pet_gallery")
+}
+
+model VaccinationReminder {
+  id            String         @id @default(uuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  petId         String
+  pet           Pet            @relation(fields: [petId], references: [id], onDelete: Cascade)
+  vaccinationId String
+  vaccination   Vaccination    @relation(fields: [vaccinationId], references: [id], onDelete: Cascade)
+  type          ReminderType
+  message       String
+  scheduledFor  DateTime
+  status        ReminderStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+
+  @@index([scheduledFor])
+  @@index([status])
+  @@index([userId])
+  @@index([petId])
+  @@map("vaccination_reminders")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E-Commerce Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  RETURN_REQUESTED
+  RETURNED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  COD
+  ONLINE
+  UPI
+  CARD
+}
+
+enum ProductCategory {
+  FOOD
+  TREATS
+  TOYS
+  GROOMING
+  HEALTH
+  ACCESSORIES
+  CLOTHING
+  BEDS
+  CAGES
+  AQUARIUM
+  OTHER
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shop
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Shop {
+  id          String   @id @default(uuid())
+  ownerId     String   @unique
+  owner       User     @relation("ShopOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  name        String
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  logoPublicId String?
+  bannerUrl   String?
+  bannerPublicId String?
+  phone       String?
+  email       String?
+  address     String?
+  city        String?
+  state       String?
+  country     String   @default("India")
+  pincode     String?
+  latitude    Float?
+  longitude   Float?
+  isActive             Boolean  @default(true)
+  isVerified           Boolean  @default(false)
+  documentsSubmitted   Boolean  @default(false)
+  rating               Float    @default(0)
+  totalReviews         Int      @default(0)
+  createdBy            String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  deletedAt            DateTime?
+
+  products             Product[]
+  orders               Order[]
+  verificationDocs     VerificationDocument[] @relation("ShopDocs")
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@index([city])
+  @@map("shops")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Product
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Product {
+  id          String          @id @default(uuid())
+  shopId      String
+  shop        Shop            @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  name        String
+  slug        String          @unique
+  description String?
+  category    ProductCategory @default(OTHER)
+  brand       String?
+  sku         String?         @unique
+  price       Float
+  salePrice   Float?
+  stock       Int             @default(0)
+  unit        String          @default("piece")
+  imageUrl    String?
+  imagePublicId String?
+  images      ProductImage[]
+  isActive    Boolean         @default(true)
+  isFeatured  Boolean         @default(false)
+  tags        String[]
+  weight      Float?
+  createdBy   String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+
+  @@index([shopId])
+  @@index([category])
+  @@index([isActive])
+  @@index([price])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  publicId  String
+  alt       String?
+  sortOrder Int      @default(0)
+  @@index([productId])
+  @@map("product_images")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Address
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Address {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  phone        String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  country      String   @default("India")
+  pincode      String
+  landmark     String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders       Order[]
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cart
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String  @id @default(uuid())
+  cartId    String
+  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int
+
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@map("cart_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Order
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrderCounter {
+  year Int @id
+  seq  Int @default(0)
+
+  @@map("order_counters")
+}
+
+model Order {
+  id            String        @id @default(uuid())
+  orderNumber   String        @unique
+  customerId    String
+  customer      User          @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: Restrict)
+  shopId        String
+  shop          Shop          @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  addressId     String
+  address       Address       @relation(fields: [addressId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  subtotal      Float
+  discount      Float         @default(0)
+  tax           Float         @default(0)
+  shipping      Float         @default(0)
+  totalAmount   Float
+  paymentMethod PaymentMethod @default(COD)
+  paymentStatus PaymentStatus @default(PENDING)
+  orderStatus   OrderStatus   @default(PENDING)
+  notes         String?
+  placedAt      DateTime      @default(now())
+  deliveredAt   DateTime?
+  cancelledAt   DateTime?
+  cancellationReason String?
+  cancelledBy   String?
+  timeline      OrderTimeline[]
+  deliveryAssignment DeliveryAssignment?
+  deliveryEarning    Earning?          @relation("DeliveryEarning")
+  createdBy     String
+  updatedBy     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([shopId])
+  @@index([orderStatus])
+  @@index([paymentStatus])
+  @@index([placedAt])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productName String
+  quantity    Int
+  unitPrice   Float
+  subtotal    Float
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderTimeline {
+  id        String      @id @default(uuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  remarks   String?
+  createdBy String
+  createdAt DateTime    @default(now())
+
+  @@index([orderId])
+  @@map("order_timeline")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delivery Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum VehicleType {
+  BIKE
+  SCOOTER
+  BICYCLE
+  CAR
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delivery Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeliveryPartner {
+  id               String      @id @default(uuid())
+  userId           String      @unique
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType      VehicleType
+  vehicleNumber    String
+  drivingLicense   String
+  profilePhoto     String?
+  aadhaarNumber    String
+  emergencyContact String
+  isApproved       Boolean     @default(false)
+  isAvailable      Boolean     @default(false)
+  isOnline         Boolean     @default(false)
+  averageRating    Float       @default(0)
+  totalRatings     Int         @default(0)
+  totalDeliveries  Int         @default(0)
+  totalEarnings    Float       @default(0)
+  currentLat       Float?
+  currentLng       Float?
+  locationUpdatedAt DateTime?
+  suspendedAt      DateTime?
+  suspendedBy      String?
+  suspendReason    String?
+  approvedAt       DateTime?
+  approvedBy       String?
+  createdBy        String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  assignments      DeliveryAssignment[]
+  locationUpdates  LocationUpdate[]
+  ratings          DeliveryRating[]
+  earnings         Earning[]
+
+  @@index([isApproved])
+  @@index([isOnline])
+  @@index([isAvailable])
+  @@index([userId])
+  @@map("delivery_partners")
+}
+
+model DeliveryAssignment {
+  id                String          @id @default(uuid())
+  orderId           String          @unique
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  deliveryPartnerId String
+  deliveryPartner   DeliveryPartner @relation(fields: [deliveryPartnerId], references: [id], onDelete: Restrict)
+  assignedAt        DateTime        @default(now())
+  acceptedAt        DateTime?
+  pickedUpAt        DateTime?
+  outForDeliveryAt  DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  cancelledAt       DateTime?
+  status            DeliveryStatus  @default(ASSIGNED)
+  notes             String?
+  failureReason     String?
+  assignedBy        String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  rating            DeliveryRating?
+
+  @@index([deliveryPartnerId])
+  @@index([status])
+  @@index([assignedAt])
+  @@map("delivery_assignments")
+}
+
+model LocationUpdate {
+  id                String          @id @default(uuid())
+  deliveryPartnerId String
+  deliveryPartner   DeliveryPartner @relation(fields: [deliveryPartnerId], references: [id], onDelete: Cascade)
+  latitude          Float
+  longitude         Float
+  accuracy          Float?
+  timestamp         DateTime        @default(now())
+
+  @@index([deliveryPartnerId])
+  @@index([timestamp])
+  @@map("location_updates")
+}
+
+model DeliveryRating {
+  id                String             @id @default(uuid())
+  assignmentId      String             @unique
+  assignment        DeliveryAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  customerId        String
+  customer          User               @relation("CustomerDeliveryRatings", fields: [customerId], references: [id], onDelete: Restrict)
+  deliveryPartnerId String
+  deliveryPartner   DeliveryPartner    @relation(fields: [deliveryPartnerId], references: [id], onDelete: Restrict)
+  rating            Int
+  review            String?
+  createdAt         DateTime           @default(now())
+
+  @@index([deliveryPartnerId])
+  @@index([customerId])
+  @@map("delivery_ratings")
+}
+
+model Earning {
+  id                String          @id @default(uuid())
+  deliveryPartnerId String
+  deliveryPartner   DeliveryPartner @relation(fields: [deliveryPartnerId], references: [id], onDelete: Restrict)
+  orderId           String          @unique
+  order             Order           @relation("DeliveryEarning", fields: [orderId], references: [id], onDelete: Restrict)
+  amount            Float
+  type              String          @default("DELIVERY_FEE")
+  createdAt         DateTime        @default(now())
+
+  @@index([deliveryPartnerId])
+  @@index([createdAt])
+  @@map("earnings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notification Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum NotificationType {
+  BOOKING_CREATED
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_COMPLETED
+  ORDER_PLACED
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  REVIEW_RECEIVED
+  PET_VACCINATION_DUE
+  PET_VACCINATION_REMINDER
+  SYSTEM_ANNOUNCEMENT
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  DELIVERY_ASSIGNED
+  DELIVERY_ACCEPTED
+  DELIVERY_COMPLETED
+  DELIVERY_FAILED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+enum NotificationLogStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notification Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      NotificationType
+  imageUrl  String?
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  logs      NotificationLog[]
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model DeviceToken {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation("UserDeviceTokens", fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String
+  platform    DevicePlatform
+  fcmToken    String
+  isActive    Boolean        @default(true)
+  lastUsedAt  DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@index([fcmToken])
+  @@map("device_tokens")
+}
+
+model NotificationPreference {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  user                    User     @relation("UserNotificationPreference", fields: [userId], references: [id], onDelete: Cascade)
+  bookingNotifications    Boolean  @default(true)
+  orderNotifications      Boolean  @default(true)
+  reviewNotifications     Boolean  @default(true)
+  vaccinationReminders    Boolean  @default(true)
+  marketingNotifications  Boolean  @default(true)
+  systemNotifications     Boolean  @default(true)
+  deliveryNotifications   Boolean  @default(true)
+  updatedAt               DateTime @updatedAt
+
+  @@map("notification_preferences")
+}
+
+model NotificationLog {
+  id             String                @id @default(uuid())
+  notificationId String
+  notification   Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  status         NotificationLogStatus @default(PENDING)
+  provider       String                @default("FCM")
+  sentAt         DateTime?
+  error          String?
+  createdAt      DateTime              @default(now())
+
+  @@index([notificationId])
+  @@index([status])
+  @@map("notification_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pet Services & Bookings (Phase 12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PetService {
+  id               String          @id @default(uuid())
+  clinicId         String
+  clinic           Clinic          @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  name             String
+  description      String?
+  category         ServiceCategory
+  price            Float
+  duration         Int             // minutes
+  maxPetsPerSlot   Int             @default(1)
+  isActive         Boolean         @default(true)
+  imageUrl         String?
+  imagePublicId    String?
+  createdBy        String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deletedAt        DateTime?
+
+  bookings         ServiceBooking[]
+
+  @@index([clinicId])
+  @@index([category])
+  @@index([isActive])
+  @@index([price])
+  @@map("pet_services")
+}
+
+model ServiceBooking {
+  id           String               @id @default(uuid())
+  serviceId    String
+  service      PetService           @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  petId        String
+  pet          Pet                  @relation(fields: [petId], references: [id], onDelete: Restrict)
+  customerId   String
+  customer     User                 @relation("CustomerServiceBookings", fields: [customerId], references: [id], onDelete: Restrict)
+  scheduledAt  DateTime
+  status       ServiceBookingStatus @default(PENDING)
+  notes        String?
+  totalPrice   Float
+  confirmedAt  DateTime?
+  cancelledAt  DateTime?
+  completedAt  DateTime?
+  noShowAt     DateTime?
+  cancelReason String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([serviceId])
+  @@index([petId])
+  @@index([customerId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("service_bookings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Complaints (Phase 13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Complaint {
+  id          String            @id @default(uuid())
+  userId      String
+  user        User              @relation("UserComplaints", fields: [userId], references: [id], onDelete: Cascade)
+  category    ComplaintCategory
+  subject     String
+  description String
+  status      ComplaintStatus   @default(OPEN)
+  adminNotes  String?
+  assignedTo  String?
+  resolvedAt  DateTime?
+  orderId     String?
+  appointmentId String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+  @@map("complaints")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System Settings (Phase 14)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  description String?
+  category    String   @default("general")
+  isPublic    Boolean  @default(false)
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@map("system_settings")
+}
+
+model GlobalHoliday {
+  id         String   @id @default(uuid())
+  name       String
+  date       DateTime @db.Date
+  recurring  Boolean  @default(false)
+  affectsAll Boolean  @default(true)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("global_holidays")
+}
+
+model ComplianceRule {
+  id          String   @id @default(uuid())
+  rule        String
+  description String?
+  mandatory   Boolean  @default(true)
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("compliance_rules")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Logs (Phase 13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verification Documents (Phase 15)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VerificationDocument {
+  id           String                @id @default(uuid())
+  clinicId     String?
+  clinic       Clinic?               @relation("ClinicDocs", fields: [clinicId], references: [id], onDelete: Cascade)
+  shopId       String?
+  shop         Shop?                 @relation("ShopDocs", fields: [shopId], references: [id], onDelete: Cascade)
+  docType      VerificationDocType
+  fileUrl      String
+  filePublicId String
+  status       VerificationDocStatus @default(PENDING)
+  rejectedReason String?
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  uploadedBy   String
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([clinicId])
+  @@index([shopId])
+  @@index([status])
+  @@map("verification_documents")
+}
+
+model AuditLog {
+  id        String      @id @default(uuid())
+  userId    String?
+  action    AuditAction
+  entity    String
+  entityId  String?
+  oldData   Json?
+  newData   Json?
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

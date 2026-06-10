@@ -1,0 +1,30 @@
+# Development override — only starts infrastructure services
+# Run: docker-compose -f docker-compose.dev.yml up -d
+# Then: npm run start:dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pawgo_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pawgo_user
+      POSTGRES_PASSWORD: pawgo_password
+      POSTGRES_DB: pawgo_dev
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: pawgo_redis_dev
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_dev_data:/data
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
