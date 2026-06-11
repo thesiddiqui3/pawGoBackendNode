@@ -342,4 +342,75 @@ export class AdminUserService {
 
     return { sent: users.length };
   }
+
+  async getPet(id: string) {
+    return this.prisma.pet.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        owner: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+      },
+    });
+  }
+
+  async revenueByClinic(query: RevenueQuery) {
+    const from = query.from ? new Date(query.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = query.to ? new Date(query.to) : new Date();
+
+    const rows = await this.prisma.appointment.groupBy({
+      by: ['clinicId'],
+      _count: { id: true },
+      where: {
+        createdAt: { gte: from, lte: to },
+        status: { notIn: ['CANCELLED'] as any },
+      },
+      orderBy: { _count: { id: 'desc' } },
+    });
+
+    const clinicIds = rows.map((r) => r.clinicId);
+    const clinics = await this.prisma.clinic.findMany({
+      where: { id: { in: clinicIds } },
+      select: { id: true, name: true, city: true },
+    });
+    const clinicMap = Object.fromEntries(clinics.map((c) => [c.id, c]));
+
+    return {
+      period: { from: from.toISOString(), to: to.toISOString() },
+      data: rows.map((r) => ({
+        clinic: clinicMap[r.clinicId] ?? { id: r.clinicId },
+        appointments: (r._count as any).id,
+      })),
+    };
+  }
+
+  async revenueByShop(query: RevenueQuery) {
+    const from = query.from ? new Date(query.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = query.to ? new Date(query.to) : new Date();
+
+    const rows = await this.prisma.order.groupBy({
+      by: ['shopId'],
+      _sum: { totalAmount: true },
+      _count: { id: true },
+      where: {
+        createdAt: { gte: from, lte: to },
+        orderStatus: { notIn: ['CANCELLED'] as any },
+      },
+      orderBy: { _sum: { totalAmount: 'desc' } },
+    });
+
+    const shopIds = rows.map((r) => r.shopId);
+    const shops = await this.prisma.shop.findMany({
+      where: { id: { in: shopIds } },
+      select: { id: true, name: true, city: true },
+    });
+    const shopMap = Object.fromEntries(shops.map((s) => [s.id, s]));
+
+    return {
+      period: { from: from.toISOString(), to: to.toISOString() },
+      data: rows.map((r) => ({
+        shop: shopMap[r.shopId] ?? { id: r.shopId },
+        revenue: r._sum?.totalAmount ?? 0,
+        orders: (r._count as any).id,
+      })),
+    };
+  }
 }

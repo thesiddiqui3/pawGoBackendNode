@@ -35,10 +35,10 @@ import { UpdateClinicDto } from '../clinics/dto/update-clinic.dto';
 import { ShopsService } from '../shops/shops.service';
 import { UpdateShopDto } from '../shops/dto/update-shop.dto';
 import { DeliveryPartnerRepository } from '../delivery-partners/delivery-partner.repository';
-import { UpdateComplaintStatusDto } from '../complaints/dto/update-complaint-status.dto';
+import { UpdateComplaintPriorityDto, UpdateComplaintStatusDto } from '../complaints/dto/update-complaint-status.dto';
 import { DoctorRepository } from '../doctors/doctor.repository';
 import { CancelAppointmentDto } from '../appointments/dto/cancel-appointment.dto';
-import { AppointmentStatus, OrderStatus } from '@prisma/client';
+import { AppointmentStatus, OrderStatus, ServiceBookingStatus } from '@prisma/client';
 import { ProductsService } from '../products/products.service';
 import { ProductQueryDto } from '../products/dto/product-query.dto';
 import { VerificationDocsService } from '../verification-docs/verification-docs.service';
@@ -506,6 +506,15 @@ export class AdminController {
     return ApiResponseDto.success(result);
   }
 
+  @Get('pets/:id')
+  @ApiOperation({ summary: 'Get pet detail (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getPet(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const pet = await this.adminUserSvc.getPet(id);
+    if (!pet) throw new NotFoundException('Pet not found');
+    return ApiResponseDto.success(pet);
+  }
+
   // ─── Revenue Reports ──────────────────────────────────────────────────────
 
   @Get('revenue')
@@ -525,6 +534,20 @@ export class AdminController {
     res.send(csv);
   }
 
+  @Get('revenue/by-clinic')
+  @ApiOperation({ summary: 'Revenue breakdown by clinic (admin)' })
+  async revenueByClinic(@Query() query: RevenueQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.adminUserSvc.revenueByClinic(query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Get('revenue/by-shop')
+  @ApiOperation({ summary: 'Revenue breakdown by shop (admin)' })
+  async revenueByShop(@Query() query: RevenueQueryDto): Promise<ApiResponseDto<object>> {
+    const result = await this.adminUserSvc.revenueByShop(query);
+    return ApiResponseDto.success(result);
+  }
+
   // ─── Bulk Actions ─────────────────────────────────────────────────────────
 
   @Patch('users/bulk-status')
@@ -541,6 +564,14 @@ export class AdminController {
   async broadcast(@Body() dto: BroadcastNotificationDto): Promise<ApiResponseDto<object>> {
     const result = await this.adminUserSvc.broadcastNotification(dto);
     return ApiResponseDto.success(result, `Notification sent to ${result.sent} users`);
+  }
+
+  @Delete('notifications/:id')
+  @ApiOperation({ summary: 'Delete a specific notification (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteNotification(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    await this.notificationRepo.deleteAdmin(id);
+    return ApiResponseDto.success({ deleted: true }, 'Notification deleted');
   }
 
   // ─── Complaints ───────────────────────────────────────────────────────────
@@ -569,6 +600,17 @@ export class AdminController {
   ): Promise<ApiResponseDto<object>> {
     const complaint = await this.complaintsSvc.updateStatus(id, dto);
     return ApiResponseDto.success(complaint, 'Complaint updated');
+  }
+
+  @Patch('complaints/:id/priority')
+  @ApiOperation({ summary: 'Set complaint priority (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async setComplaintPriority(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateComplaintPriorityDto,
+  ): Promise<ApiResponseDto<object>> {
+    const complaint = await this.complaintsSvc.updatePriority(id, dto.priority);
+    return ApiResponseDto.success(complaint, 'Complaint priority updated');
   }
 
   // ─── Appointments ─────────────────────────────────────────────────────────
@@ -717,6 +759,19 @@ export class AdminController {
     const booking = await this.bookingRepo.findById(id);
     if (!booking) throw new NotFoundException('Service booking not found');
     return ApiResponseDto.success(booking);
+  }
+
+  @Patch('service-bookings/:id/status')
+  @ApiOperation({ summary: 'Override service booking status — cancel or complete (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateServiceBookingStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('status') status: ServiceBookingStatus,
+  ): Promise<ApiResponseDto<object>> {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Service booking not found');
+    const updated = await this.bookingRepo.updateStatus(id, { status });
+    return ApiResponseDto.success(updated, 'Booking status updated');
   }
 
   // ─── Pet Services (admin) ─────────────────────────────────────────────────

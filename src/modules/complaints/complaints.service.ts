@@ -50,6 +50,12 @@ export class ComplaintsService {
     });
   }
 
+  async updatePriority(id: string, priority: string) {
+    const complaint = await this.repo.findById(id);
+    if (!complaint) throw new NotFoundException('Complaint not found');
+    return this.repo.update(id, { priority: priority as any });
+  }
+
   async assign(id: string, dto: AssignComplaintDto) {
     const complaint = await this.repo.findById(id);
     if (!complaint) throw new NotFoundException('Complaint not found');

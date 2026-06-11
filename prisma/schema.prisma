@@ -135,6 +135,13 @@ enum ComplaintStatus {
   REJECTED
 }
 
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 enum ComplaintCategory {
   ORDER
   DELIVERY
@@ -1351,7 +1358,8 @@ model Complaint {
   category    ComplaintCategory
   subject     String
   description String
-  status      ComplaintStatus   @default(OPEN)
+  status      ComplaintStatus    @default(OPEN)
+  priority    ComplaintPriority  @default(MEDIUM)
   adminNotes  String?
   assignedTo  String?
   resolvedAt  DateTime?

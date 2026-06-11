@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ComplaintStatus } from '@prisma/client';
+import { ComplaintPriority, ComplaintStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class UpdateComplaintStatusDto {
@@ -18,4 +18,10 @@ export class AssignComplaintDto {
   @ApiProperty()
   @IsUUID()
   assignedTo!: string;
+}
+
+export class UpdateComplaintPriorityDto {
+  @ApiProperty({ enum: ComplaintPriority })
+  @IsEnum(ComplaintPriority)
+  priority!: ComplaintPriority;
 }

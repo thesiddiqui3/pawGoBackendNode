@@ -90,6 +90,10 @@ export class NotificationRepository {
     return this.prisma.notification.deleteMany({ where: { id, userId } });
   }
 
+  async deleteAdmin(id: string) {
+    return this.prisma.notification.deleteMany({ where: { id } });
+  }
+
   async createLog(data: {
     notificationId: string;
     status: 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED';

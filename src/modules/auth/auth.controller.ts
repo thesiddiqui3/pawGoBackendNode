@@ -71,6 +71,7 @@ export class AuthController {
 
   @UseGuards(RefreshTokenGuard)
   @Post('refresh-token')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @UseGuards(RefreshTokenGuard)
   @ApiBearerAuth('access-token')
@@ -90,6 +91,7 @@ export class AuthController {
 
   // ─── Logout ───────────────────────────────────────────────────────────────
 
+  @Public()
   @UseGuards(RefreshTokenGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
