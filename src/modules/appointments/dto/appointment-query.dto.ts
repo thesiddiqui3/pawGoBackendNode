@@ -40,4 +40,14 @@ export class AppointmentQueryDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-01', description: 'Range start date (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-30', description: 'Range end date (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }

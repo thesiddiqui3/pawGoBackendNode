@@ -21,6 +21,7 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ApiResponseDto } from '../../common/dto/api-response.dto';
+import { AppointmentStatus } from '../../common/enums/appointment.enum';
 import { UserRole } from '../../common/enums/user-role.enum';
 import { AppointmentsService } from './appointments.service';
 import {
@@ -30,6 +31,7 @@ import {
   CreateAppointmentDto,
   RescheduleAppointmentDto,
   UpdateAppointmentStatusDto,
+  WalkInAppointmentDto,
 } from './dto';
 
 // ─── Appointment routes (/api/v1/appointments) ─────────────────────────────────
@@ -50,6 +52,18 @@ export class AppointmentsController {
   ): Promise<ApiResponseDto<object>> {
     const appt = await this.appointmentsService.create(dto, user.sub, user.role);
     return ApiResponseDto.success(appt, 'Appointment booked successfully');
+  }
+
+  // POST /appointments/walk-in
+  @Post('walk-in')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Create walk-in appointment (reception/clinic staff)' })
+  async createWalkIn(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: WalkInAppointmentDto,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.createWalkIn(dto, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Walk-in appointment created');
   }
 
   // GET /appointments/my
@@ -104,6 +118,18 @@ export class AppointmentsController {
     return ApiResponseDto.success(stats);
   }
 
+  // GET /appointments/clinic — clinic staff list their own clinic's appointments
+  @Get('clinic')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List appointments for my clinic (auto-resolved from auth token)' })
+  async findMyClinicAppointments(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: AppointmentQueryDto,
+  ): Promise<ApiResponseDto<object>> {
+    const data = await this.appointmentsService.findMyClinicAppointments(user.sub, user.role, query);
+    return ApiResponseDto.success(data);
+  }
+
   // GET /appointments (admin list with full filters)
   @Get()
   @Roles(UserRole.SUPER_ADMIN)
@@ -115,7 +141,7 @@ export class AppointmentsController {
 
   // GET /appointments/:id
   @Get(':id')
-  @ApiOperation({ summary: 'Get appointment details (owner, assigned doctor, or admin)' })
+  @ApiOperation({ summary: 'Get appointment details (owner, assigned doctor, clinic staff, or admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -127,7 +153,8 @@ export class AppointmentsController {
 
   // PATCH /appointments/:id/status
   @Patch(':id/status')
-  @ApiOperation({ summary: 'Update appointment status (doctor or admin)' })
+  @Roles(UserRole.ASSISTANT, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.PET_OWNER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update appointment status (doctor, clinic staff, pet owner cancel, or admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   async updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -140,7 +167,8 @@ export class AppointmentsController {
 
   // PATCH /appointments/:id/reschedule
   @Patch(':id/reschedule')
-  @ApiOperation({ summary: 'Reschedule an appointment (owner or admin)' })
+  @Roles(UserRole.PET_OWNER, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reschedule an appointment (owner, clinic staff, or admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   async reschedule(
     @Param('id', ParseUUIDPipe) id: string,
@@ -154,7 +182,8 @@ export class AppointmentsController {
   // PATCH /appointments/:id/cancel
   @Patch(':id/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel an appointment (owner or admin)' })
+  @Roles(UserRole.PET_OWNER, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Cancel an appointment (owner, clinic staff, or admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   async cancel(
     @Param('id', ParseUUIDPipe) id: string,
@@ -163,6 +192,120 @@ export class AppointmentsController {
   ): Promise<ApiResponseDto<object>> {
     const appt = await this.appointmentsService.cancel(id, dto, user.sub, user.role);
     return ApiResponseDto.success(appt, 'Appointment cancelled');
+  }
+
+  // PATCH /appointments/:id/confirm — convenience alias
+  @Patch(':id/confirm')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Confirm an appointment' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async confirm(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateStatus(id, { status: AppointmentStatus.CONFIRMED }, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Appointment confirmed');
+  }
+
+  // PATCH /appointments/:id/check-in — mark patient as checked in
+  @Patch(':id/check-in')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Check in an appointment (patient arrived)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async checkIn(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateStatus(id, { status: AppointmentStatus.CHECKED_IN }, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Patient checked in');
+  }
+
+  // PATCH /appointments/:id/start — mark as in-progress (from CHECKED_IN)
+  @Patch(':id/start')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Start an appointment (mark as in-progress)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async start(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateStatus(id, { status: AppointmentStatus.IN_PROGRESS }, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Appointment started');
+  }
+
+  // PATCH /appointments/:id/complete — convenience alias
+  @Patch(':id/complete')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Mark appointment as completed' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async complete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateStatus(id, { status: AppointmentStatus.COMPLETED }, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Appointment completed');
+  }
+
+  // PATCH /appointments/:id/no-show — convenience alias
+  @Patch(':id/no-show')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Mark appointment as no-show' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async noShow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateStatus(id, { status: AppointmentStatus.NO_SHOW }, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Appointment marked as no-show');
+  }
+
+  // PATCH /appointments/:id/assign-doctor
+  @Patch(':id/assign-doctor')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Assign a doctor to an appointment' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async assignDoctor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { doctorId: string },
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.assignDoctor(id, body.doctorId, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Doctor assigned');
+  }
+
+  // PATCH /appointments/:id/assign-assistant
+  @Patch(':id/notes')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Add or update internal notes on an appointment' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async addNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { notes: string },
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.updateNotes(id, body.notes, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Note saved');
+  }
+
+  @Patch(':id/assign-assistant')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Assign an assistant to an appointment' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async assignAssistant(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { assistantId: string },
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.assignAssistant(id, body.assistantId, user.sub, user.role);
+    return ApiResponseDto.success(appt, 'Assistant assigned');
   }
 }
 
@@ -176,7 +319,7 @@ export class ClinicAppointmentsController {
 
   // GET /clinics/:clinicId/appointments
   @Get(':clinicId/appointments')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.CLINIC_OWNER)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST)
   @ApiOperation({ summary: 'List appointments for a specific clinic' })
   @ApiParam({ name: 'clinicId', type: 'string', format: 'uuid' })
   async findByClinic(

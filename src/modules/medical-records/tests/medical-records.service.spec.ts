@@ -101,6 +101,7 @@ describe('MedicalRecordsService', () => {
       expect(recordRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ chiefComplaint: 'Loss of appetite' }),
         [],
+        expect.objectContaining({ petId: 'pet-uuid', clinicId: 'clinic-uuid' }),
       );
     });
 
@@ -126,6 +127,7 @@ describe('MedicalRecordsService', () => {
       expect(recordRepo.create).toHaveBeenCalledWith(
         expect.anything(),
         expect.arrayContaining([expect.objectContaining({ medicineName: 'Amoxicillin' })]),
+        expect.objectContaining({ petId: 'pet-uuid', clinicId: 'clinic-uuid' }),
       );
     });
   });

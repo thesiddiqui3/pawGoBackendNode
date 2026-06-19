@@ -31,7 +31,7 @@ const makeDoctor = (overrides = {}) => ({
   id: 'doc-uuid',
   userId: 'user-uuid',
   isActive: true,
-  isVerified: false,
+  isVerified: true,
   photoPublicId: null,
   ...overrides,
 });

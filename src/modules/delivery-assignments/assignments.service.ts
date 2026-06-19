@@ -7,9 +7,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { DeliveryStatus } from '@prisma/client';
+import { DeliveryStatus, OrderStatus } from '@prisma/client';
 import { DeliveryEvent, DeliveryAssignmentEventPayload } from '../../common/events/delivery.events';
 import { UserRole } from '../../common/enums';
+import { PrismaService } from '../../database/prisma.service';
 import { DeliveryPartnerRepository } from '../delivery-partners/delivery-partner.repository';
 import { AssignmentRepository } from './assignment.repository';
 import { AssignmentQueryDto } from './dto/assignment-query.dto';
@@ -43,6 +44,7 @@ export class AssignmentsService {
     private readonly assignmentRepository: AssignmentRepository,
     private readonly partnerRepository: DeliveryPartnerRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─── Admin: create manual assignment ──────────────────────────────────────
@@ -73,8 +75,10 @@ export class AssignmentsService {
 
   // ─── Partner: list own assignments ────────────────────────────────────────
 
-  async findMyAssignments(partnerId: string, query: AssignmentQueryDto) {
-    return this.buildQuery({ deliveryPartnerId: partnerId }, query);
+  async findMyAssignments(userId: string, query: AssignmentQueryDto) {
+    const partner = await this.partnerRepository.findByUserId(userId);
+    if (!partner) throw new NotFoundException('Delivery partner profile not found');
+    return this.buildQuery({ deliveryPartnerId: partner.id }, query);
   }
 
   async findOne(id: string, requesterId: string, requesterRole: string) {
@@ -86,28 +90,39 @@ export class AssignmentsService {
 
   // ─── Partner: status transitions ──────────────────────────────────────────
 
-  async accept(id: string, partnerId: string) {
-    const assignment = await this.getAndAssertPartner(id, partnerId);
-    const partner = await this.partnerRepository.findById(partnerId);
-    if (!partner?.isOnline) throw new BadRequestException('You must be online to accept assignments');
-    return this.transition(assignment, DeliveryStatus.ACCEPTED, { acceptedAt: new Date() });
+  async accept(id: string, userId: string) {
+    const assignment = await this.getAndAssertPartner(id, userId);
+    const updated = await this.transition(assignment, DeliveryStatus.ACCEPTED, { acceptedAt: new Date() });
+    // PACKED → customer sees "Delivery Assigned" (no change needed, already PACKED)
+    return updated;
   }
 
-  async pickup(id: string, partnerId: string) {
-    const assignment = await this.getAndAssertPartner(id, partnerId);
+  async pickup(id: string, userId: string) {
+    const assignment = await this.getAndAssertPartner(id, userId);
     return this.transition(assignment, DeliveryStatus.PICKED_UP, { pickedUpAt: new Date() });
   }
 
-  async startDelivery(id: string, partnerId: string) {
-    const assignment = await this.getAndAssertPartner(id, partnerId);
-    return this.transition(assignment, DeliveryStatus.OUT_FOR_DELIVERY, { outForDeliveryAt: new Date() });
+  async startDelivery(id: string, userId: string) {
+    const assignment = await this.getAndAssertPartner(id, userId);
+    const updated = await this.transition(assignment, DeliveryStatus.OUT_FOR_DELIVERY, { outForDeliveryAt: new Date() });
+    // Update order status → customer sees "On The Way"
+    await this.prisma.order.update({
+      where: { id: assignment.orderId },
+      data: { orderStatus: OrderStatus.OUT_FOR_DELIVERY },
+    });
+    return updated;
   }
 
-  async markDelivered(id: string, partnerId: string) {
-    const assignment = await this.getAndAssertPartner(id, partnerId);
+  async markDelivered(id: string, userId: string) {
+    const assignment = await this.getAndAssertPartner(id, userId);
     const updated = await this.transition(assignment, DeliveryStatus.DELIVERED, { deliveredAt: new Date() });
-    // Increment partner's delivery count (earnings recorded by EarningService on this event)
-    await this.partnerRepository.incrementDeliveries(partnerId, 0); // earnings via event
+    // Update the parent order status to DELIVERED
+    await this.prisma.order.update({
+      where: { id: assignment.orderId },
+      data: { orderStatus: OrderStatus.DELIVERED, deliveredAt: new Date() },
+    });
+    const partner = await this.partnerRepository.findByUserId(userId);
+    if (partner) await this.partnerRepository.incrementDeliveries(partner.id, 0);
     return updated;
   }
 
@@ -135,10 +150,12 @@ export class AssignmentsService {
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  private async getAndAssertPartner(assignmentId: string, partnerId: string) {
+  private async getAndAssertPartner(assignmentId: string, userId: string) {
+    const partner = await this.partnerRepository.findByUserId(userId);
+    if (!partner) throw new NotFoundException('Delivery partner profile not found');
     const assignment = await this.assignmentRepository.findById(assignmentId);
     if (!assignment) throw new NotFoundException('Assignment not found');
-    if (assignment.deliveryPartnerId !== partnerId) {
+    if (assignment.deliveryPartnerId !== partner.id) {
       throw new ForbiddenException('You are not assigned to this order');
     }
     return assignment;

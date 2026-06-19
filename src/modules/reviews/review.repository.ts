@@ -77,16 +77,21 @@ export class ReviewRepository {
           user: { select: USER_SELECT },
           clinic: { select: { id: true, name: true } },
           doctor: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
+          shop: { select: { id: true, name: true } },
         },
       }),
       this.prisma.review.count({ where }),
     ]);
 
-    // Flatten target name into a consistent `targetName` field
+    // Flatten target name and reply into consistent fields
     const mapped = items.map((r: any) => ({
       ...r,
+      author: r.user,
+      reply: r.clinicReply,
+      replyAt: r.clinicReplyAt,
       targetName: r.clinic?.name
         ?? (r.doctor ? `Dr. ${r.doctor.user.firstName} ${r.doctor.user.lastName}` : null)
+        ?? r.shop?.name
         ?? r.targetId,
     }));
 
@@ -106,6 +111,24 @@ export class ReviewRepository {
 
   async delete(id: string): Promise<void> {
     await this.prisma.review.delete({ where: { id } });
+  }
+
+  async addReply(id: string, reply: string, replyBy: string): Promise<any> {
+    const r = await this.prisma.review.update({
+      where: { id },
+      data: { clinicReply: reply, clinicReplyAt: new Date(), replyBy },
+      include: { user: { select: USER_SELECT } },
+    });
+    return { ...r, author: r.user, reply: r.clinicReply, replyAt: r.clinicReplyAt };
+  }
+
+  async removeReply(id: string): Promise<any> {
+    const r = await this.prisma.review.update({
+      where: { id },
+      data: { clinicReply: null, clinicReplyAt: null, replyBy: null },
+      include: { user: { select: USER_SELECT } },
+    });
+    return { ...r, author: r.user, reply: null, replyAt: null };
   }
 
   async aggregateRating(targetType: ReviewTargetType, targetId: string): Promise<RatingAggregate> {

@@ -82,6 +82,38 @@ export class ReviewsService {
     this.logger.log(`Review deleted: ${id}`);
   }
 
+  // ─── Clinic Reply ─────────────────────────────────────────────────────────
+
+  async addReply(id: string, reply: string, requesterId: string, role: string): Promise<Review> {
+    const review = await this.findOrThrow(id);
+
+    if (review.targetType !== 'CLINIC' && review.targetType !== 'ASSISTANT') {
+      throw new ForbiddenException('Use the shop replies endpoint for shop/product reviews');
+    }
+
+    if (role !== UserRole.SUPER_ADMIN) {
+      const clinic = await this.clinicRepository.findById(review.targetId);
+      if (!clinic || clinic.createdBy !== requesterId) {
+        throw new ForbiddenException('You can only reply to reviews of your own clinic');
+      }
+    }
+
+    return this.reviewRepository.addReply(id, reply, requesterId);
+  }
+
+  async removeReply(id: string, requesterId: string, role: string): Promise<Review> {
+    const review = await this.findOrThrow(id);
+
+    if (role !== UserRole.SUPER_ADMIN) {
+      const clinic = await this.clinicRepository.findById(review.targetId);
+      if (!clinic || clinic.createdBy !== requesterId) {
+        throw new ForbiddenException('You can only remove replies from your own clinic reviews');
+      }
+    }
+
+    return this.reviewRepository.removeReply(id);
+  }
+
   // ─── Rating aggregation ───────────────────────────────────────────────────
 
   private async propagateRating(

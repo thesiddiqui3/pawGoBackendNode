@@ -31,7 +31,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { ApiResponseDto } from '../../common/dto/api-response.dto';
 import { UserRole } from '../../common/enums';
 import { ClinicsService } from './clinics.service';
-import { ClinicQueryDto, CreateClinicDto, NearbyClinicDto, UpdateClinicDto } from './dto';
+import { ClinicQueryDto, CreateClinicDto, NearbyClinicDto, UpdateClinicDto, UploadGalleryPhotoDto } from './dto';
 
 const UPLOAD_CONFIG = {
   storage: memoryStorage(),
@@ -79,6 +79,15 @@ export class ClinicsController {
     return ApiResponseDto.success(clinic);
   }
 
+  @Get('my/verification-status')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.CLINIC_OWNER)
+  @ApiOperation({ summary: 'Get my clinic verification status and submitted documents' })
+  async getVerificationStatus(@CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    const status = await this.clinicsService.getVerificationStatus(user.sub);
+    return ApiResponseDto.success(status);
+  }
+
   // ─── List (public) ────────────────────────────────────────────────────────
 
   @Public()
@@ -114,8 +123,11 @@ export class ClinicsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get clinic details including doctors and review count' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
-    const clinic = await this.clinicsService.findOne(id);
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicsService.findOne(id, user?.role);
     return ApiResponseDto.success(clinic);
   }
 
@@ -250,5 +262,61 @@ export class ClinicsController {
   ): Promise<ApiResponseDto<object>> {
     const clinic = await this.clinicsService.uploadBanner(id, file, user.sub, user.role);
     return ApiResponseDto.success(clinic, 'Banner uploaded');
+  }
+
+  // ─── Gallery ──────────────────────────────────────────────────────────────
+
+  @Public()
+  @Get(':id/gallery')
+  @ApiOperation({ summary: 'Get clinic gallery photos (public)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async getGallery(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const photos = await this.clinicsService.getGallery(id);
+    return ApiResponseDto.success(photos);
+  }
+
+  @Post(':id/gallery')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.CLINIC_OWNER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Upload a clinic gallery photo (admin or clinic owner)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        caption: { type: 'string' },
+        category: { type: 'string' },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', UPLOAD_CONFIG))
+  async uploadGalleryPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadGalleryPhotoDto,
+  ): Promise<ApiResponseDto<object>> {
+    const photo = await this.clinicsService.uploadGalleryPhoto(id, file, user.sub, user.role, dto.caption, dto.category);
+    return ApiResponseDto.success(photo, 'Gallery photo uploaded');
+  }
+
+  @Delete(':id/gallery/:photoId')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.CLINIC_OWNER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a clinic gallery photo (admin or clinic owner)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  @ApiParam({ name: 'photoId', type: 'string', format: 'uuid' })
+  async deleteGalleryPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<null>> {
+    await this.clinicsService.deleteGalleryPhoto(id, photoId, user.sub, user.role);
+    return ApiResponseDto.success(null, 'Gallery photo deleted');
   }
 }

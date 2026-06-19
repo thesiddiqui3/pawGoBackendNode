@@ -188,7 +188,7 @@ export class NotificationEventListener {
         doctor: { include: { user: { select: { firstName: true, lastName: true, id: true } } } },
         pet: { select: { ownerId: true } },
       },
-    }).then((apt) => apt ? { ...apt, ownerId: apt.pet.ownerId } : null);
+    }).then((apt) => apt ? { ...apt, ownerId: apt.pet?.ownerId ?? apt.ownerId ?? '' } : null);
   }
 
   private async safe(event: string, fn: () => Promise<void>) {

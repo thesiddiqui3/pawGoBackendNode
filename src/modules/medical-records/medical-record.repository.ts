@@ -40,17 +40,26 @@ export class MedicalRecordRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(
-    data: Omit<Prisma.MedicalRecordCreateInput, 'prescriptions'>,
+    data: Record<string, unknown>,
     prescriptions: PrescriptionDto[],
+    context?: { petId: string; clinicId: string; createdBy: string },
   ): Promise<MedicalRecordDetail> {
-    return this.prisma.medicalRecord.create({
-      data: {
-        ...data,
-        prescriptions: {
-          create: prescriptions,
-        },
-      },
-      include: RECORD_INCLUDE,
+    return this.prisma.$transaction(async (tx) => {
+      const record = await tx.medicalRecord.create({ data: data as any, include: RECORD_INCLUDE });
+      if (prescriptions.length > 0 && context) {
+        await tx.prescription.createMany({
+          data: prescriptions.map((p) => ({
+            ...p,
+            recordId: record.id,
+            petId: context.petId,
+            clinicId: context.clinicId,
+            createdBy: context.createdBy,
+          })),
+        });
+        // reload to include prescriptions
+        return tx.medicalRecord.findUniqueOrThrow({ where: { id: record.id }, include: RECORD_INCLUDE });
+      }
+      return record;
     });
   }
 
@@ -103,14 +112,23 @@ export class MedicalRecordRepository {
     id: string,
     data: Prisma.MedicalRecordUpdateInput,
     prescriptions?: PrescriptionDto[],
+    context?: { petId: string; clinicId: string; createdBy: string },
   ): Promise<MedicalRecordDetail> {
     return this.prisma.$transaction(async (tx) => {
       if (prescriptions !== undefined) {
         // Replace prescriptions: delete all existing, create new ones
         await tx.prescription.deleteMany({ where: { recordId: id } });
-        await tx.prescription.createMany({
-          data: prescriptions.map((p) => ({ ...p, recordId: id })),
-        });
+        if (context) {
+          await tx.prescription.createMany({
+            data: prescriptions.map((p) => ({
+              ...p,
+              recordId: id,
+              petId: context.petId,
+              clinicId: context.clinicId,
+              createdBy: context.createdBy,
+            })),
+          });
+        }
       }
       return tx.medicalRecord.update({
         where: { id },

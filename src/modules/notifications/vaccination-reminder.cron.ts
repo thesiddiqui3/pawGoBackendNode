@@ -41,6 +41,7 @@ export class VaccinationReminderCron {
       });
 
       for (const vacc of dueVaccinations) {
+        if (!vacc.pet) continue;
         const isEnabled = await this.isVaccinationReminderEnabled(vacc.pet.ownerId);
         if (!isEnabled) continue;
 

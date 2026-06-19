@@ -24,15 +24,15 @@ export class DoctorRepository {
   async create(dto: CreateDoctorDto): Promise<Doctor> {
     return this.prisma.doctor.create({
       data: {
-        userId: dto.userId,
+        userId: dto.userId!,
         clinicId: dto.clinicId,
         specializations: dto.specializations,
-        experienceYears: dto.experienceYears,
+        experienceYears: dto.experienceYears ?? 0,
         consultationFee: dto.consultationFee,
         bio: dto.bio,
         languages: dto.languages ?? [],
-        ...(dto.availability?.length && {
-          availability: { create: dto.availability.map((a) => ({ ...a, isAvailable: a.isAvailable ?? true })) },
+        ...(Array.isArray(dto.availability) && dto.availability.length && {
+          availability: { create: (dto.availability as import('./dto/availability.dto').AvailabilityDto[]).map((a) => ({ ...a, isAvailable: a.isAvailable ?? true })) },
         }),
         ...(dto.education?.length && {
           education: { create: dto.education },
@@ -59,7 +59,9 @@ export class DoctorRepository {
     const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
     const where: Prisma.DoctorWhereInput = {
-      isActive: true,
+      // If querying for a specific clinic (owner view), show all doctors (active + inactive)
+      // Public listings always filter to active only
+      ...(query.clinicId ? {} : { isActive: true }),
       ...(query.verified !== undefined && { isVerified: query.verified }),
       ...(query.clinicId && { clinicId: query.clinicId }),
       ...(query.specialization && { specializations: { has: query.specialization } }),
@@ -136,6 +138,10 @@ export class DoctorRepository {
 
   async deactivate(id: string): Promise<Doctor> {
     return this.prisma.doctor.update({ where: { id }, data: { isActive: false } });
+  }
+
+  async activate(id: string): Promise<Doctor> {
+    return this.prisma.doctor.update({ where: { id }, data: { isActive: true }, include: INCLUDE_FULL });
   }
 
   async upsertAvailability(

@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsDateString,
   IsNotEmpty,
@@ -13,20 +12,42 @@ import {
 import { PrescriptionDto } from './prescription.dto';
 
 export class CreateMedicalRecordDto {
-  @ApiProperty({ example: 'uuid-of-pet' })
+  @ApiPropertyOptional({ description: 'Pet UUID — omit for walk-in / unregistered pets' })
+  @IsOptional()
   @IsUUID()
-  petId: string;
+  petId?: string;
 
-  @ApiProperty({ example: 'uuid-of-clinic' })
+  @ApiPropertyOptional({ description: 'Walk-in pet name (when petId is not provided)' })
+  @IsOptional()
+  @IsString()
+  petName?: string;
+
+  @ApiPropertyOptional({ description: 'Pet species/type' })
+  @IsOptional()
+  @IsString()
+  petType?: string;
+
+  @ApiPropertyOptional({ description: 'Owner name for walk-in' })
+  @IsOptional()
+  @IsString()
+  ownerName?: string;
+
+  @ApiPropertyOptional({ description: 'Clinic UUID — auto-resolved from token if omitted' })
+  @IsOptional()
   @IsUUID()
-  clinicId: string;
+  clinicId?: string;
 
-  @ApiPropertyOptional({ example: 'uuid-of-appointment' })
+  @ApiPropertyOptional({ description: 'Doctor UUID — required when clinic owner is creating' })
+  @IsOptional()
+  @IsUUID()
+  doctorId?: string;
+
+  @ApiPropertyOptional({ description: 'Appointment UUID (omit if no linked appointment)' })
   @IsOptional()
   @IsUUID()
   appointmentId?: string;
 
-  @ApiProperty({ example: '2026-06-15', description: 'YYYY-MM-DD' })
+  @ApiProperty({ example: '2026-06-15', description: 'Visit date YYYY-MM-DD' })
   @IsDateString()
   visitDate: string;
 
@@ -52,7 +73,7 @@ export class CreateMedicalRecordDto {
   @IsString()
   treatmentPlan?: string;
 
-  @ApiPropertyOptional({ example: 'Patient is anxious' })
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   notes?: string;

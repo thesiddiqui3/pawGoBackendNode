@@ -31,6 +31,8 @@ const makeClinic = (overrides = {}) => ({
   logoPublicId: null,
   bannerPublicId: null,
   deletedAt: null,
+  isVerified: true,
+  isActive: true,
   workingHours: [],
   _count: { doctors: 0, reviews: 0 },
   ...overrides,

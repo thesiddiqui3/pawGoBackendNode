@@ -21,7 +21,10 @@ import {
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { ApiResponseDto } from '../../common/dto/api-response.dto';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { UserRole } from '../../common/enums';
 import { CreateReviewDto, ReviewQueryDto, UpdateReviewDto } from './dto';
+import { ReplyReviewDto } from './dto/reply-review.dto';
 import { ReviewsService } from './reviews.service';
 
 @ApiTags('Reviews')
@@ -74,5 +77,36 @@ export class ReviewsController {
   ): Promise<ApiResponseDto<null>> {
     await this.reviewsService.remove(id, user.sub, user.role);
     return ApiResponseDto.success(null, 'Review deleted');
+  }
+
+  // ─── Clinic Reply ──────────────────────────────────────────────────────────
+
+  @Post(':id/reply')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Add clinic reply to a review (clinic owner or admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async addReply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReplyReviewDto,
+  ): Promise<ApiResponseDto<object>> {
+    const review = await this.reviewsService.addReply(id, dto.reply, user.sub, user.role);
+    return ApiResponseDto.success(review, 'Reply added');
+  }
+
+  @Delete(':id/reply')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove clinic reply from a review (clinic owner or admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async removeReply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const review = await this.reviewsService.removeReply(id, user.sub, user.role);
+    return ApiResponseDto.success(review, 'Reply removed');
   }
 }

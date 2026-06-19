@@ -13,14 +13,30 @@ export class VerificationDocsService {
     private readonly cloudinary: CloudinaryService,
   ) {}
 
-  // ─── CLINIC_OWNER submits a doc ───────────────────────────────────────────
+  // ─── Resolve clinic for owner or staff ───────────────────────────────────
 
-  async uploadClinicDoc(ownerId: string, dto: UploadDocDto, file: Express.Multer.File) {
-    const clinic = await this.prisma.clinic.findFirst({
-      where: { createdBy: ownerId, deletedAt: null },
+  private async resolveClinicForUser(userId: string): Promise<{ id: string; isVerified: boolean } | null> {
+    const owned = await this.prisma.clinic.findFirst({
+      where: { createdBy: userId, deletedAt: null },
       select: { id: true, isVerified: true },
     });
-    if (!clinic) throw new NotFoundException('Clinic not found for this owner');
+    if (owned) return owned;
+    const staff = await this.prisma.clinicStaff.findUnique({
+      where: { userId },
+      select: { clinicId: true },
+    });
+    if (!staff) return null;
+    return this.prisma.clinic.findFirst({
+      where: { id: staff.clinicId, deletedAt: null },
+      select: { id: true, isVerified: true },
+    });
+  }
+
+  // ─── CLINIC_OWNER / CLINIC_MANAGER submits a doc ─────────────────────────
+
+  async uploadClinicDoc(ownerId: string, dto: UploadDocDto, file: Express.Multer.File) {
+    const clinic = await this.resolveClinicForUser(ownerId);
+    if (!clinic) throw new NotFoundException('Clinic not found for this user');
     if (clinic.isVerified) throw new BadRequestException('Clinic is already verified');
 
     const uploaded = await this.cloudinary.uploadBuffer(file.buffer, `verification/clinic/${clinic.id}`);
@@ -42,10 +58,7 @@ export class VerificationDocsService {
   }
 
   async getClinicDocs(ownerId: string) {
-    const clinic = await this.prisma.clinic.findFirst({
-      where: { createdBy: ownerId, deletedAt: null },
-      select: { id: true },
-    });
+    const clinic = await this.resolveClinicForUser(ownerId);
     if (!clinic) throw new NotFoundException('Clinic not found');
     return this.repo.findAllForClinic(clinic.id);
   }
@@ -54,10 +67,8 @@ export class VerificationDocsService {
     const doc = await this.repo.findById(docId);
     if (!doc || !doc.clinicId) throw new NotFoundException('Document not found');
 
-    const clinic = await this.prisma.clinic.findFirst({
-      where: { createdBy: ownerId, id: doc.clinicId },
-    });
-    if (!clinic) throw new ForbiddenException('Not your document');
+    const clinic = await this.resolveClinicForUser(ownerId);
+    if (!clinic || clinic.id !== doc.clinicId) throw new ForbiddenException('Not your document');
     if (doc.status === 'APPROVED') throw new BadRequestException('Cannot delete an approved document');
 
     await this.cloudinary.deleteByPublicId(doc.filePublicId);
@@ -103,6 +114,105 @@ export class VerificationDocsService {
 
     const shop = await this.prisma.shop.findFirst({ where: { ownerId, id: doc.shopId } });
     if (!shop) throw new ForbiddenException('Not your document');
+    if (doc.status === 'APPROVED') throw new BadRequestException('Cannot delete an approved document');
+
+    await this.cloudinary.deleteByPublicId(doc.filePublicId);
+    return this.repo.deleteDoc(docId);
+  }
+
+  // ─── CLINIC_OWNER uploads doctor verification doc ────────────────────────
+
+  async uploadDoctorDoc(ownerId: string, doctorId: string, dto: UploadDocDto, file: Express.Multer.File) {
+    // Verify doctor belongs to owner's clinic
+    const clinic = await this.prisma.clinic.findFirst({
+      where: { createdBy: ownerId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!clinic) throw new NotFoundException('Clinic not found for this owner');
+
+    const doctor = await this.prisma.doctor.findFirst({
+      where: { id: doctorId, clinicId: clinic.id },
+    });
+    if (!doctor) throw new NotFoundException('Doctor not found at your clinic');
+
+    const uploaded = await this.cloudinary.uploadBuffer(file.buffer, `verification/doctor/${doctorId}`);
+    return this.repo.create({
+      doctorId,
+      docType: dto.docType,
+      fileUrl: uploaded.url,
+      filePublicId: uploaded.publicId,
+      uploadedBy: ownerId,
+    });
+  }
+
+  async getDoctorDocs(ownerId: string, doctorId: string) {
+    const clinic = await this.prisma.clinic.findFirst({
+      where: { createdBy: ownerId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!clinic) throw new NotFoundException('Clinic not found');
+
+    const doctor = await this.prisma.doctor.findFirst({ where: { id: doctorId, clinicId: clinic.id } });
+    if (!doctor) throw new NotFoundException('Doctor not found at your clinic');
+
+    return this.repo.findAllForDoctor(doctorId);
+  }
+
+  async deleteDoctorDoc(ownerId: string, docId: string) {
+    const doc = await this.repo.findById(docId);
+    if (!doc || !doc.doctorId) throw new NotFoundException('Document not found');
+
+    const clinic = await this.prisma.clinic.findFirst({ where: { createdBy: ownerId, deletedAt: null } });
+    if (!clinic) throw new ForbiddenException('Not your document');
+
+    const doctor = await this.prisma.doctor.findFirst({ where: { id: doc.doctorId, clinicId: clinic.id } });
+    if (!doctor) throw new ForbiddenException('Not your document');
+
+    if (doc.status === 'APPROVED') throw new BadRequestException('Cannot delete an approved document');
+    await this.cloudinary.deleteByPublicId(doc.filePublicId);
+    return this.repo.deleteDoc(docId);
+  }
+
+  async getDocsForDoctorAdmin(doctorId: string) {
+    return this.repo.findAllForDoctor(doctorId);
+  }
+
+  // ─── SHOP_OWNER manages delivery partner docs ─────────────────────────────
+
+  private async resolveDeliveryPartnerForShop(ownerId: string, deliveryPartnerId: string) {
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId }, select: { id: true } });
+    if (!shop) throw new NotFoundException('Shop not found for this owner');
+
+    const dp = await this.prisma.deliveryPartner.findFirst({
+      where: { id: deliveryPartnerId, createdBy: ownerId },
+    });
+    if (!dp) throw new NotFoundException('Delivery partner not found at your shop');
+    return { shop, dp };
+  }
+
+  async uploadDeliveryPartnerDoc(ownerId: string, deliveryPartnerId: string, dto: UploadDocDto, file: Express.Multer.File) {
+    await this.resolveDeliveryPartnerForShop(ownerId, deliveryPartnerId);
+
+    const uploaded = await this.cloudinary.uploadBuffer(file.buffer, `verification/delivery-partner/${deliveryPartnerId}`);
+    return this.repo.create({
+      deliveryPartnerId,
+      docType: dto.docType,
+      fileUrl: uploaded.url,
+      filePublicId: uploaded.publicId,
+      uploadedBy: ownerId,
+    });
+  }
+
+  async getDeliveryPartnerDocs(ownerId: string, deliveryPartnerId: string) {
+    await this.resolveDeliveryPartnerForShop(ownerId, deliveryPartnerId);
+    return this.repo.findAllForDeliveryPartner(deliveryPartnerId);
+  }
+
+  async deleteDeliveryPartnerDoc(ownerId: string, docId: string) {
+    const doc = await this.repo.findById(docId);
+    if (!doc || !doc.deliveryPartnerId) throw new NotFoundException('Document not found');
+
+    await this.resolveDeliveryPartnerForShop(ownerId, doc.deliveryPartnerId);
     if (doc.status === 'APPROVED') throw new BadRequestException('Cannot delete an approved document');
 
     await this.cloudinary.deleteByPublicId(doc.filePublicId);

@@ -66,9 +66,13 @@ export class ClinicsService {
 
   // ─── Detail ───────────────────────────────────────────────────────────────
 
-  async findOne(id: string): Promise<ClinicDetail> {
+  async findOne(id: string, role?: string): Promise<ClinicDetail> {
     const clinic = await this.clinicRepository.findById(id);
     if (!clinic || clinic.deletedAt) throw new NotFoundException('Clinic not found');
+    const isPrivileged = role === UserRole.SUPER_ADMIN || role === UserRole.CLINIC_OWNER;
+    if (!isPrivileged && (!clinic.isVerified || !clinic.isActive)) {
+      throw new NotFoundException('Clinic not found');
+    }
     return clinic;
   }
 
@@ -153,6 +157,69 @@ export class ClinicsService {
     const clinic = await this.clinicRepository.findById(clinicId);
     if (!clinic || clinic.deletedAt) throw new NotFoundException('Clinic not found');
     return this.clinicRepository.findDoctors(clinicId) as unknown as object[];
+  }
+
+  // ─── Gallery ─────────────────────────────────────────────────────────────
+
+  async uploadGalleryPhoto(
+    clinicId: string,
+    file: Express.Multer.File,
+    requesterId: string,
+    role: string,
+    caption?: string,
+    category?: string,
+  ) {
+    const clinic = await this.findActiveOrThrow(clinicId);
+    this.assertAdminOrOwner(clinic, requesterId, role);
+
+    const { url, publicId } = await this.cloudinaryService.uploadBuffer(
+      file.buffer,
+      'pawgo/clinics/gallery',
+      `gallery_${clinicId}_${Date.now()}`,
+    );
+    return this.clinicRepository.addGalleryPhoto(clinicId, url, publicId, requesterId, caption, category);
+  }
+
+  async getGallery(clinicId: string) {
+    const clinic = await this.clinicRepository.findById(clinicId);
+    if (!clinic || clinic.deletedAt) throw new NotFoundException('Clinic not found');
+    return this.clinicRepository.getGallery(clinicId);
+  }
+
+  async deleteGalleryPhoto(
+    clinicId: string,
+    photoId: string,
+    requesterId: string,
+    role: string,
+  ) {
+    const clinic = await this.findActiveOrThrow(clinicId);
+    this.assertAdminOrOwner(clinic, requesterId, role);
+
+    const photo = await this.clinicRepository.findGalleryPhoto(photoId);
+    if (!photo || photo.clinicId !== clinicId) throw new NotFoundException('Photo not found');
+
+    await this.cloudinaryService.deleteByPublicId(photo.publicId);
+    await this.clinicRepository.deleteGalleryPhoto(photoId);
+    this.logger.log(`Gallery photo deleted: ${photoId}`);
+  }
+
+  // ─── Verification Status ──────────────────────────────────────────────────
+
+  async getVerificationStatus(ownerId: string) {
+    const clinic = await this.clinicRepository.findByCreatedBy(ownerId);
+    if (!clinic) throw new NotFoundException('You do not have a registered clinic');
+
+    // Count documents by status using raw prisma
+    return {
+      clinic: {
+        id: clinic.id,
+        name: clinic.name,
+        isVerified: clinic.isVerified,
+        isActive: clinic.isActive,
+        documentsSubmitted: clinic.documentsSubmitted,
+        verificationNote: clinic.verificationNote,
+      },
+    };
   }
 
   // ─── Rating aggregation (called by ReviewsService) ────────────────────────

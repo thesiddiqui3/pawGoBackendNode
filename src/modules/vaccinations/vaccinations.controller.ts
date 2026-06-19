@@ -46,8 +46,8 @@ export class VaccinationsController {
 
   // POST /vaccinations
   @Post()
-  @Roles(UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Record a vaccination (doctor or admin)' })
+  @Roles(UserRole.ASSISTANT, UserRole.CLINIC_MANAGER, UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Record a vaccination (doctor, clinic manager, or admin)' })
   async create(
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateVaccinationDto,
@@ -100,8 +100,8 @@ export class VaccinationsController {
 
   // PATCH /vaccinations/:id
   @Patch(':id')
-  @Roles(UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Update a vaccination record (doctor owner or admin)' })
+  @Roles(UserRole.ASSISTANT, UserRole.CLINIC_MANAGER, UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update a vaccination record (doctor, clinic manager, or admin)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,

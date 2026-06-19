@@ -30,11 +30,19 @@ async function bootstrap(): Promise<void> {
   const devOrigins = [
     'http://localhost:5173',  // pet owner / admin panel
     'http://localhost:5174',  // clinic panel
+    'http://localhost:5175',  // shop panel
+    'http://localhost:5176',  // clinic panel (alt port)
+    'http://localhost:5177',
     'http://localhost:3000',
     'http://localhost:4173',
     'http://localhost:4174',
+    'http://localhost:4175',
+    'http://localhost:4176',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
+    'http://127.0.0.1:5176',
+    'http://127.0.0.1:5177',
   ];
   app.enableCors({
     origin: nodeEnv === 'production' ? frontendUrl : devOrigins,

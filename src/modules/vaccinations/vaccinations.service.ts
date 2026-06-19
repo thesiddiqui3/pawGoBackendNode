@@ -33,30 +33,56 @@ export class VaccinationsService {
     requesterId: string,
     requesterRole: string,
   ): Promise<VaccinationDetail> {
-    const pet = await this.petRepository.findById(dto.petId);
-    if (!pet || pet.deletedAt) throw new NotFoundException('Pet not found');
+    // ── Validate petId if provided ───────────────────────────────────────────
+    if (dto.petId) {
+      const pet = await this.petRepository.findById(dto.petId);
+      if (!pet || pet.deletedAt) throw new NotFoundException('Pet not found');
+    }
 
-    const doctorId = await this.resolveDoctorId(requesterId, requesterRole);
+    // ── Auto-resolve clinicId ────────────────────────────────────────────────
+    let resolvedClinicId = dto.clinicId;
+    if (!resolvedClinicId && !this.isAdmin(requesterRole)) {
+      const clinic = await this.prisma.clinic.findFirst({ where: { createdBy: requesterId, deletedAt: null } });
+      if (clinic) resolvedClinicId = clinic.id;
+      else {
+        const staff = await this.prisma.clinicStaff.findUnique({ where: { userId: requesterId }, select: { clinicId: true } });
+        if (staff) resolvedClinicId = staff.clinicId;
+      }
+    }
 
-    const vaccination = await this.vaccinationRepository.create({
-      pet: { connect: { id: dto.petId } },
+    // ── Resolve doctorId ─────────────────────────────────────────────────────
+    let resolvedDoctorId: string | null = dto.doctorId ?? null;
+    if (!resolvedDoctorId) {
+      resolvedDoctorId = await this.resolveDoctorId(requesterId, requesterRole);
+    }
+
+    const createData: Record<string, unknown> = {
       vaccineName: dto.vaccineName,
+      vaccineType: dto.vaccineType,
       manufacturer: dto.manufacturer,
       batchNumber: dto.batchNumber,
       dateAdministered: new Date(dto.dateAdministered),
       nextDueDate: dto.nextDueDate ? new Date(dto.nextDueDate) : undefined,
-      ...(doctorId && { doctor: { connect: { id: doctorId } } }),
-      ...(dto.clinicId && { clinic: { connect: { id: dto.clinicId } } }),
+      walkinPetName: dto.petName,
+      walkinPetType: dto.petType,
+      walkinOwnerName: dto.ownerName,
+      walkinOwnerPhone: dto.ownerPhone,
       notes: dto.notes,
       createdBy: requesterId,
-    });
+    };
+    if (dto.petId) createData.pet = { connect: { id: dto.petId } };
+    if (resolvedDoctorId) createData.doctor = { connect: { id: resolvedDoctorId } };
+    if (resolvedClinicId) createData.clinic = { connect: { id: resolvedClinicId } };
 
-    // Generate reminders if nextDueDate is set
-    if (dto.nextDueDate) {
-      await this.generateReminders(vaccination.id, pet.ownerId, dto.petId, new Date(dto.nextDueDate), dto.vaccineName);
+    const vaccination = await this.vaccinationRepository.create(createData as Parameters<VaccinationRepository['create']>[0]);
+
+    // Generate reminders if nextDueDate is set and pet owner is known
+    if (dto.nextDueDate && dto.petId) {
+      const pet = await this.petRepository.findById(dto.petId);
+      if (pet) await this.generateReminders(vaccination.id, pet.ownerId, dto.petId, new Date(dto.nextDueDate), dto.vaccineName);
     }
 
-    this.logger.log(`Vaccination created: ${vaccination.id} for pet ${dto.petId}`);
+    this.logger.log(`Vaccination created: ${vaccination.id}`);
     return vaccination;
   }
 
@@ -137,7 +163,7 @@ export class VaccinationsService {
     requesterRole: string,
   ): Promise<VaccinationDetail> {
     const v = await this.vaccinationOrThrow(id);
-    await this.assertPetAccess(v.petId, requesterId, requesterRole);
+    await this.assertPetAccess(v.petId ?? '', requesterId, requesterRole);
     return v;
   }
 
@@ -163,7 +189,7 @@ export class VaccinationsService {
 
     // Regenerate reminders if nextDueDate changed
     if (dto.nextDueDate && updated.nextDueDate) {
-      const pet = await this.petRepository.findById(updated.petId);
+      const pet = await this.petRepository.findById(updated.petId ?? '');
       if (pet) {
         // Cancel old reminders first
         await this.prisma.vaccinationReminder.updateMany({
@@ -321,6 +347,7 @@ export class VaccinationsService {
     requesterRole: string,
   ): Promise<void> {
     if (this.isAdmin(requesterRole)) return;
+
     if (requesterRole === UserRole.ASSISTANT) {
       const profile = await this.prisma.doctor.findUnique({
         where: { userId: requesterId },
@@ -329,7 +356,28 @@ export class VaccinationsService {
       if (profile && vaccination.doctorId === profile.id) return;
       throw new ForbiddenException('You can only modify vaccinations you administered');
     }
+
+    // Clinic managers and owners can manage vaccinations at their clinic
+    if (requesterRole === UserRole.CLINIC_MANAGER || requesterRole === UserRole.CLINIC_OWNER) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (clinicId && vaccination.clinicId === clinicId) return;
+      throw new ForbiddenException('You can only manage vaccinations at your own clinic');
+    }
+
     throw new ForbiddenException('Only doctors and admins can modify vaccination records');
+  }
+
+  private async resolveStaffClinicId(userId: string): Promise<string | null> {
+    const owned = await this.prisma.clinic.findFirst({
+      where: { createdBy: userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (owned) return owned.id;
+    const staff = await this.prisma.clinicStaff.findUnique({
+      where: { userId },
+      select: { clinicId: true },
+    });
+    return staff?.clinicId ?? null;
   }
 
   private async vaccinationOrThrow(id: string): Promise<VaccinationDetail> {

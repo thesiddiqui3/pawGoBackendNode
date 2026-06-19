@@ -15,6 +15,8 @@ import { MedicalRecordQueryDto } from './dto/medical-record-query.dto';
 import { UpdateMedicalRecordDto } from './dto/update-medical-record.dto';
 import { MedicalRecordDetail, MedicalRecordRepository } from './medical-record.repository';
 
+const CLINIC_STAFF_ROLES = [UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST];
+
 @Injectable()
 export class MedicalRecordsService {
   private readonly logger = new Logger(MedicalRecordsService.name);
@@ -33,30 +35,67 @@ export class MedicalRecordsService {
     requesterId: string,
     requesterRole: string,
   ): Promise<MedicalRecordDetail> {
-    const doctorId = await this.resolveDoctorId(requesterId, requesterRole, dto.clinicId);
+    // ── Auto-resolve clinicId ────────────────────────────────────────────────
+    let resolvedClinicId = dto.clinicId;
+    if (!resolvedClinicId && !this.isAdmin(requesterRole)) {
+      const clinic = await this.prisma.clinic.findFirst({ where: { createdBy: requesterId, deletedAt: null } });
+      if (!clinic) {
+        const staff = await this.prisma.clinicStaff.findUnique({ where: { userId: requesterId }, select: { clinicId: true } });
+        if (staff) resolvedClinicId = staff.clinicId;
+      } else {
+        resolvedClinicId = clinic.id;
+      }
+    }
+    if (!resolvedClinicId) throw new NotFoundException('Could not resolve clinic for this user');
 
-    const pet = await this.petRepository.findById(dto.petId);
-    if (!pet || pet.deletedAt) throw new NotFoundException('Pet not found');
+    // ── Resolve doctorId ─────────────────────────────────────────────────────
+    let resolvedDoctorId: string;
+    if (CLINIC_STAFF_ROLES.includes(requesterRole as UserRole)) {
+      // Clinic owner/manager: use explicitly provided doctorId or first active doctor
+      if (dto.doctorId) {
+        resolvedDoctorId = dto.doctorId;
+      } else {
+        const doc = await this.prisma.doctor.findFirst({ where: { clinicId: resolvedClinicId, isActive: true }, select: { id: true } });
+        if (!doc) throw new NotFoundException('No active doctor found at this clinic');
+        resolvedDoctorId = doc.id;
+      }
+    } else {
+      resolvedDoctorId = await this.resolveDoctorId(requesterId, requesterRole, resolvedClinicId);
+    }
+
+    // ── Resolve petId ────────────────────────────────────────────────────────
+    let resolvedPetId = dto.petId;
+    if (resolvedPetId) {
+      const pet = await this.petRepository.findById(resolvedPetId);
+      if (!pet || pet.deletedAt) throw new NotFoundException('Pet not found');
+    }
+
+    const createData: Record<string, unknown> = {
+      doctorId: resolvedDoctorId,
+      clinicId: resolvedClinicId,
+      ...(resolvedPetId && { petId: resolvedPetId }),
+      ...(dto.appointmentId && { appointmentId: dto.appointmentId }),
+      // Walk-in info (stored even when petId is present for denormalized display)
+      walkinPetName: dto.petName,
+      walkinPetType: dto.petType,
+      walkinOwnerName: dto.ownerName,
+      visitDate: new Date(dto.visitDate),
+      chiefComplaint: dto.chiefComplaint,
+      symptoms: dto.symptoms ?? [],
+      diagnosis: dto.diagnosis ?? [],
+      treatmentPlan: dto.treatmentPlan,
+      notes: dto.notes,
+      followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
+      createdBy: requesterId,
+    };
 
     const record = await this.recordRepository.create(
-      {
-        pet: { connect: { id: dto.petId } },
-        doctor: { connect: { id: doctorId } },
-        clinic: { connect: { id: dto.clinicId } },
-        ...(dto.appointmentId && { appointment: { connect: { id: dto.appointmentId } } }),
-        visitDate: new Date(dto.visitDate),
-        chiefComplaint: dto.chiefComplaint,
-        symptoms: dto.symptoms ?? [],
-        diagnosis: dto.diagnosis ?? [],
-        treatmentPlan: dto.treatmentPlan,
-        notes: dto.notes,
-        followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
-        createdBy: requesterId,
-      },
+      createData,
       dto.prescriptions ?? [],
+      { petId: resolvedPetId ?? '', clinicId: resolvedClinicId, createdBy: requesterId },
     );
 
-    this.logger.log(`Medical record created: ${record.id} for pet ${dto.petId}`);
+    this.logger.log(`Medical record created: ${record.id}`);
     return record;
   }
 
@@ -74,6 +113,13 @@ export class MedicalRecordsService {
     if (requesterRole === UserRole.ASSISTANT) {
       const doctorProfile = await this.findDoctorProfile(requesterId);
       return this.recordRepository.findMany({ ...query, doctorId: doctorProfile.id });
+    }
+
+    // Clinic staff see records scoped to their clinic
+    if (CLINIC_STAFF_ROLES.includes(requesterRole as UserRole)) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (!clinicId) throw new ForbiddenException('You are not associated with a clinic');
+      return this.recordRepository.findMany({ ...query, clinicId });
     }
 
     throw new ForbiddenException('Access denied');
@@ -127,6 +173,9 @@ export class MedicalRecordsService {
         updatedBy: requesterId,
       },
       dto.prescriptions,
+      dto.prescriptions !== undefined
+        ? { petId: record.petId ?? '', clinicId: record.clinicId, createdBy: requesterId }
+        : undefined,
     );
 
     this.logger.log(`Medical record updated: ${id}`);
@@ -266,10 +315,31 @@ export class MedicalRecordsService {
   ): Promise<void> {
     if (this.isAdmin(requesterRole) || requesterRole === UserRole.ASSISTANT) return;
 
+    // Clinic staff can read records at their clinic
+    if (CLINIC_STAFF_ROLES.includes(requesterRole as UserRole)) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (clinicId && record.clinicId === clinicId) return;
+    }
+
     // Pet owner can read their pet's records
-    const pet = await this.petRepository.findById(record.petId);
-    if (pet && pet.ownerId === requesterId) return;
+    if (record.petId) {
+      const pet = await this.petRepository.findById(record.petId);
+      if (pet && pet.ownerId === requesterId) return;
+    }
     throw new ForbiddenException('Access denied');
+  }
+
+  private async resolveStaffClinicId(userId: string): Promise<string | null> {
+    const owned = await this.prisma.clinic.findFirst({
+      where: { createdBy: userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (owned) return owned.id;
+    const staff = await this.prisma.clinicStaff.findUnique({
+      where: { userId },
+      select: { clinicId: true },
+    });
+    return staff?.clinicId ?? null;
   }
 
   private async assertWriteAccess(

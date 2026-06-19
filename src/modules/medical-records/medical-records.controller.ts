@@ -52,8 +52,8 @@ export class MedicalRecordsController {
 
   // POST /medical-records
   @Post()
-  @Roles(UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Create a medical record (doctor or admin)' })
+  @Roles(UserRole.ASSISTANT, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Create a medical record (doctor, clinic staff, or admin)' })
   async create(
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateMedicalRecordDto,
@@ -64,8 +64,8 @@ export class MedicalRecordsController {
 
   // GET /medical-records
   @Get()
-  @Roles(UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'List medical records with filters (doctor sees own, admin sees all)' })
+  @Roles(UserRole.ASSISTANT, UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List medical records (doctor → own, clinic staff → clinic-scoped, admin → all)' })
   async findMany(
     @CurrentUser() user: JwtPayload,
     @Query() query: MedicalRecordQueryDto,

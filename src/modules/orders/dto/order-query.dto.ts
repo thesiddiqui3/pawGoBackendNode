@@ -18,4 +18,9 @@ export class OrderQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   orderNumber?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  search?: string;
 }

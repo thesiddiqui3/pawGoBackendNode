@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
@@ -113,10 +114,7 @@ export class ShopOrdersController {
     @CurrentUser() user: JwtPayload,
     @Query() query: OrderQueryDto,
   ): Promise<ApiResponseDto<object>> {
-    // shopId is resolved via the shop lookup in CheckoutService; here owner queries their shop's orders
-    // Shop owner's ownerId = user.sub; find shopId from shop
-    // For simplicity we pass ownerId and let the service filter via shop relation
-    const data = await this.ordersService.findAll({ ...query, shopId: user.sub } as any);
+    const data = await this.ordersService.findByOwner(user.sub, query);
     return ApiResponseDto.success(data);
   }
 
@@ -124,7 +122,7 @@ export class ShopOrdersController {
   @Roles(UserRole.SHOP_OWNER, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get shop order statistics' })
   async getShopStats(@CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
-    const stats = await this.ordersService.getShopStats(user.sub);
+    const stats = await this.ordersService.getShopStatsByOwner(user.sub);
     return ApiResponseDto.success(stats);
   }
 
@@ -178,5 +176,47 @@ export class ShopOrdersController {
   ): Promise<ApiResponseDto<object>> {
     const order = await this.ordersService.updateStatus(id, OrderStatus.DELIVERED, user.sub, user.role, 'Delivered to customer');
     return ApiResponseDto.success(order, 'Order delivered');
+  }
+
+  @Patch(':id/cancel')
+  @Roles(UserRole.SHOP_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel an order (shop owner)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async cancelOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('reason') reason?: string,
+  ): Promise<ApiResponseDto<object>> {
+    const order = await this.ordersService.cancelByShop(id, reason, user.sub);
+    return ApiResponseDto.success(order, 'Order cancelled');
+  }
+
+  @Patch(':id/notes')
+  @Roles(UserRole.SHOP_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update internal notes for an order' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async updateNotes(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('notes') notes: string,
+  ): Promise<ApiResponseDto<object>> {
+    const order = await this.ordersService.addNote(id, notes, user.sub);
+    return ApiResponseDto.success(order, 'Notes updated');
+  }
+
+  @Post(':id/assign-partner')
+  @Roles(UserRole.SHOP_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign a delivery partner to an order' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async assignPartner(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('partnerId') partnerId: string,
+  ): Promise<ApiResponseDto<object>> {
+    const order = await this.ordersService.assignDeliveryPartner(id, partnerId, user.sub);
+    return ApiResponseDto.success(order, 'Partner assigned');
   }
 }

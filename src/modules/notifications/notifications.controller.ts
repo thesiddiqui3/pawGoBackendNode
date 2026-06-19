@@ -7,9 +7,9 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
   Query,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../common/enums';
@@ -19,6 +19,8 @@ import { RegisterDeviceDto } from './dto/register-device.dto';
 import { UpdatePreferenceDto } from './dto/update-preference.dto';
 import { BroadcastNotificationDto } from './dto/broadcast-notification.dto';
 
+@ApiTags('Notifications')
+@ApiBearerAuth('access-token')
 @Controller({ path: 'notifications', version: '1' })
 export class NotificationsController {
   constructor(private readonly service: NotificationsService) {}
@@ -35,27 +37,19 @@ export class NotificationsController {
     return this.service.getUnreadCount(user.sub);
   }
 
-  @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.service.findOne(id, user.sub);
+  // ─── Preferences (must be before :id routes) ─────────────────────────────
+
+  @Get('preferences')
+  getPreferences(@CurrentUser() user: JwtPayload) {
+    return this.service.getPreferences(user.sub);
   }
 
-  @Patch('read-all')
-  markAllRead(@CurrentUser() user: JwtPayload) {
-    return this.service.markAllRead(user.sub);
+  @Patch('preferences')
+  updatePreferences(@Body() dto: UpdatePreferenceDto, @CurrentUser() user: JwtPayload) {
+    return this.service.updatePreferences(user.sub, dto);
   }
 
-  @Patch(':id/read')
-  markRead(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.service.markRead(id, user.sub);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.service.remove(id, user.sub);
-  }
-
-  // ─── Device tokens ────────────────────────────────────────────────────────
+  // ─── Device tokens (must be before :id routes) ───────────────────────────
 
   @Post('device')
   registerDevice(@Body() dto: RegisterDeviceDto, @CurrentUser() user: JwtPayload) {
@@ -72,16 +66,26 @@ export class NotificationsController {
     return this.service.removeDevice(user.sub, deviceId);
   }
 
-  // ─── Preferences ──────────────────────────────────────────────────────────
-
-  @Get('preferences')
-  getPreferences(@CurrentUser() user: JwtPayload) {
-    return this.service.getPreferences(user.sub);
+  @Patch('read-all')
+  markAllRead(@CurrentUser() user: JwtPayload) {
+    return this.service.markAllRead(user.sub);
   }
 
-  @Patch('preferences')
-  updatePreferences(@Body() dto: UpdatePreferenceDto, @CurrentUser() user: JwtPayload) {
-    return this.service.updatePreferences(user.sub, dto);
+  // ─── Single notification (wildcard — keep last) ───────────────────────────
+
+  @Get(':id')
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.findOne(id, user.sub);
+  }
+
+  @Patch(':id/read')
+  markRead(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.markRead(id, user.sub);
+  }
+
+  @Delete(':id')
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.remove(id, user.sub);
   }
 }
 

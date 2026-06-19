@@ -1,15 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 const DEFAULT_PREFERENCES = {
-  bookingNotifications: true,
-  orderNotifications: true,
-  reviewNotifications: true,
-  vaccinationReminders: true,
-  marketingNotifications: true,
-  systemNotifications: true,
-  deliveryNotifications: true,
+  bookingNotifications:      true,
+  cancellationNotifications: true,
+  orderNotifications:        true,
+  reviewNotifications:       true,
+  assistantNotifications:    false,
+  vaccinationReminders:      true,
+  marketingNotifications:    true,
+  systemNotifications:       true,
+  deliveryNotifications:     true,
+  dailySummaryEmail:         false,
+  weeklySummaryEmail:        true,
 };
 
 @Injectable()

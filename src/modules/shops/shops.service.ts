@@ -62,6 +62,14 @@ export class ShopsService {
     // Note: direct update of logo fields via prisma
   }
 
+  async verify(id: string, requesterId: string, role: string): Promise<Shop> {
+    if (role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only admins can verify shops');
+    }
+    await this.findOne(id);
+    return this.shopRepository.setVerified(id, true);
+  }
+
   async suspend(id: string, requesterId: string, role: string): Promise<Shop> {
     if (role !== UserRole.SUPER_ADMIN) {
       throw new ForbiddenException('Only admins can suspend shops');

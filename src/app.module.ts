@@ -34,6 +34,11 @@ import { VerificationModule } from './modules/verification/verification.module';
 import { SystemSettingsModule } from './modules/system-settings/system-settings.module';
 import { VerificationDocsModule } from './modules/verification-docs/verification-docs.module';
 import { StaffModule } from './modules/staff/staff.module';
+import { ClinicDashboardModule } from './modules/clinic-dashboard/clinic-dashboard.module';
+import { ClinicPatientsModule } from './modules/clinic-patients/clinic-patients.module';
+import { HomeVisitsModule } from './modules/home-visits/home-visits.module';
+import { ClinicReportsModule } from './modules/clinic-reports/clinic-reports.module';
+import { PrescriptionsModule } from './modules/prescriptions/prescriptions.module';
 import { AutoAssignmentModule } from './modules/auto-assignment/auto-assignment.module';
 import { DeliveryPartnersModule } from './modules/delivery-partners/delivery-partners.module';
 import { EarningsModule } from './modules/delivery-earnings/earnings.module';
@@ -56,6 +61,7 @@ import { PetsModule } from './modules/pets/pets.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { UsersModule } from './modules/users/users.module';
 import { VaccinationsModule } from './modules/vaccinations/vaccinations.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 
 @Module({
   imports: [
@@ -125,6 +131,12 @@ import { VaccinationsModule } from './modules/vaccinations/vaccinations.module';
     SystemSettingsModule,
     VerificationDocsModule,
     StaffModule,
+    ClinicDashboardModule,
+    ClinicPatientsModule,
+    HomeVisitsModule,
+    ClinicReportsModule,
+    PrescriptionsModule,
+    CouponsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

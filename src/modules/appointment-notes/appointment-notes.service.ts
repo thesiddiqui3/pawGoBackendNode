@@ -107,7 +107,7 @@ export class AppointmentNotesService {
   }
 
   private assertReadAccess(
-    appointment: { ownerId: string; doctorId: string },
+    appointment: { ownerId: string | null; doctorId: string },
     requesterId: string,
     role: string,
   ): void {

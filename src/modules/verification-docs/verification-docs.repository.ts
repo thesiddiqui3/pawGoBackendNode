@@ -9,12 +9,22 @@ export class VerificationDocsRepository {
   async create(data: {
     clinicId?: string;
     shopId?: string;
+    doctorId?: string;
+    deliveryPartnerId?: string;
     docType: VerificationDocType;
     fileUrl: string;
     filePublicId: string;
     uploadedBy: string;
   }) {
     return this.prisma.verificationDocument.create({ data });
+  }
+
+  async findAllForDoctor(doctorId: string) {
+    return this.prisma.verificationDocument.findMany({ where: { doctorId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  async findAllForDeliveryPartner(deliveryPartnerId: string) {
+    return this.prisma.verificationDocument.findMany({ where: { deliveryPartnerId }, orderBy: { createdAt: 'desc' } });
   }
 
   async findAllForClinic(clinicId: string) {

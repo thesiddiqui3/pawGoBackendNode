@@ -27,6 +27,15 @@ const APPOINTMENT_INCLUDE = {
       user: { select: { firstName: true, lastName: true } },
     },
   },
+  assistant: {
+    select: {
+      id: true,
+      userId: true,
+      specializations: true,
+      photoUrl: true,
+      user: { select: { firstName: true, lastName: true } },
+    },
+  },
 } satisfies Prisma.AppointmentInclude;
 
 export type AppointmentDetail = Prisma.AppointmentGetPayload<{ include: typeof APPOINTMENT_INCLUDE }>;

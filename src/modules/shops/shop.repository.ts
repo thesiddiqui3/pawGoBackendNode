@@ -54,21 +54,31 @@ export class ShopRepository {
     return this.prisma.shop.findUnique({ where: { ownerId } });
   }
 
-  async findMany(filters: { city?: string; isActive?: boolean; isVerified?: boolean; search?: string }) {
-    return this.prisma.shop.findMany({
-      where: {
-        deletedAt: null,
-        ...(filters.isActive !== undefined && { isActive: filters.isActive }),
-        ...(filters.isVerified !== undefined && { isVerified: filters.isVerified }),
-        ...(filters.city && { city: { contains: filters.city, mode: 'insensitive' } }),
-        ...(filters.search && { name: { contains: filters.search, mode: 'insensitive' } }),
-      },
-      orderBy: { rating: 'desc' },
-      include: {
-        owner: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
-        _count: { select: { products: true, orders: true } },
-      },
-    });
+  async findMany(filters: { city?: string; isActive?: boolean; isVerified?: boolean; search?: string; page?: number; limit?: number }) {
+    const page  = filters.page  ?? 1;
+    const limit = filters.limit ?? 20;
+    const skip  = (page - 1) * limit;
+    const where = {
+      deletedAt: null,
+      ...(filters.isActive !== undefined && { isActive: filters.isActive }),
+      ...(filters.isVerified !== undefined && { isVerified: filters.isVerified }),
+      ...(filters.city && { city: { contains: filters.city, mode: 'insensitive' as const } }),
+      ...(filters.search && { name: { contains: filters.search, mode: 'insensitive' as const } }),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.shop.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          owner: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          _count: { select: { products: true, orders: true } },
+        },
+      }),
+      this.prisma.shop.count({ where }),
+    ]);
+    return { data: items, total, page, pageSize: limit, totalPages: Math.ceil(total / limit) };
   }
 
   async update(id: string, dto: UpdateShopDto): Promise<Shop> {
@@ -83,12 +93,31 @@ export class ShopRepository {
         ...(dto.city !== undefined && { city: dto.city }),
         ...(dto.state !== undefined && { state: dto.state }),
         ...(dto.pincode !== undefined && { pincode: dto.pincode }),
+        ...(dto.latitude !== undefined && { latitude: dto.latitude }),
+        ...(dto.longitude !== undefined && { longitude: dto.longitude }),
+        ...(dto.minOrderAmount !== undefined && { minOrderAmount: dto.minOrderAmount }),
+        ...(dto.deliveryCharge !== undefined && { deliveryCharge: dto.deliveryCharge }),
+        ...(dto.freeDeliveryAbove !== undefined && { freeDeliveryAbove: dto.freeDeliveryAbove }),
+        ...(dto.serviceRadius !== undefined && { serviceRadius: dto.serviceRadius }),
+        ...(dto.workingHours !== undefined && { workingHours: dto.workingHours }),
+        ...(dto.gstNumber !== undefined && { gstNumber: dto.gstNumber }),
+        ...(dto.shopRegNumber !== undefined && { shopRegNumber: dto.shopRegNumber }),
+        ...(dto.bankName !== undefined && { bankName: dto.bankName }),
+        ...(dto.bankAccount !== undefined && { bankAccount: dto.bankAccount }),
+        ...(dto.bankIfsc !== undefined && { bankIfsc: dto.bankIfsc }),
       },
     });
   }
 
   async setActive(id: string, isActive: boolean): Promise<Shop> {
     return this.prisma.shop.update({ where: { id }, data: { isActive } });
+  }
+
+  async setVerified(id: string, isVerified: boolean): Promise<Shop> {
+    return this.prisma.shop.update({
+      where: { id },
+      data: { isVerified, ...(isVerified && { isActive: true }) },
+    });
   }
 
   async softDelete(id: string): Promise<void> {

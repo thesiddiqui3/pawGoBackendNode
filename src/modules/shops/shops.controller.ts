@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -103,5 +106,173 @@ export class ShopsController {
   ): Promise<ApiResponseDto<object>> {
     const shop = await this.shopsService.activate(id, user.sub, user.role);
     return ApiResponseDto.success(shop, 'Shop activated');
+  }
+}
+
+// ─── Shop Reports ─────────────────────────────────────────────────────────────
+
+import { ShopReportsService } from './shop-reports.service';
+
+@ApiTags('Shop Reports')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/reports', version: '1' })
+export class ShopReportsController {
+  constructor(private readonly reportsService: ShopReportsService) {}
+
+  @Get('summary')
+  @ApiOperation({ summary: 'Get comprehensive shop analytics summary' })
+  async getSummary(@CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.reportsService.getSummary(user.sub));
+  }
+}
+
+// ─── Shop Dashboard ───────────────────────────────────────────────────────────
+
+@ApiTags('Shop Dashboard')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/dashboard', version: '1' })
+export class ShopDashboardController {
+  constructor(private readonly reportsService: ShopReportsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Get full dashboard data (stats, recent orders, low stock, reviews, revenue trend)' })
+  async getDashboard(@CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.reportsService.getDashboard(user.sub));
+  }
+}
+
+// ─── Shop Earnings ─────────────────────────────────────────────────────────────
+
+@ApiTags('Shop Earnings')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/earnings', version: '1' })
+export class ShopEarningsController {
+  constructor(private readonly reportsService: ShopReportsService) {}
+
+  @Get('summary')
+  @ApiOperation({ summary: 'Get earnings summary (revenue, fees, refunds, monthly trend)' })
+  async getEarningsSummary(@CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.reportsService.getEarningsSummary(user.sub));
+  }
+}
+
+// ─── Shop Reviews ─────────────────────────────────────────────────────────────
+
+import { ShopReviewsService } from './shop-reviews.service';
+
+@ApiTags('Shop Reviews')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/reviews', version: '1' })
+export class ShopReviewsController {
+  constructor(private readonly shopReviewsService: ShopReviewsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List reviews for the shop owner\'s shop' })
+  async findMany(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: Record<string, any>,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.shopReviewsService.findShopReviews(user.sub, query));
+  }
+
+  @Post(':id/reply')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Add reply to a shop review' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async addReply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('reply') reply: string,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.shopReviewsService.addReply(id, reply, user.sub));
+  }
+
+  @Delete(':id/reply')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove reply from a shop review' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async removeReply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.shopReviewsService.removeReply(id, user.sub));
+  }
+}
+
+// ─── Shop Customers ───────────────────────────────────────────────────────────
+
+import { ShopCustomersService } from './shop-customers.service';
+
+@ApiTags('Shop Customers')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/customers', version: '1' })
+export class ShopCustomersController {
+  constructor(private readonly shopCustomersService: ShopCustomersService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List customers who ordered from this shop' })
+  async findMany(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: Record<string, any>,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.shopCustomersService.findCustomers(user.sub, query));
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a single customer with their order history at this shop' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.shopCustomersService.getCustomerById(user.sub, id));
+  }
+}
+
+// ─── Shop Inventory ───────────────────────────────────────────────────────────
+
+import { ShopInventoryService } from './shop-inventory.service';
+
+@ApiTags('Shop Inventory')
+@ApiBearerAuth('access-token')
+@Roles(UserRole.SHOP_OWNER)
+@Controller({ path: 'my-shop/inventory', version: '1' })
+export class ShopInventoryController {
+  constructor(private readonly inventoryService: ShopInventoryService) {}
+
+  @Get('products')
+  @ApiOperation({ summary: 'List all shop products (incl. inactive) for inventory management' })
+  async listProducts(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: Record<string, any>,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.inventoryService.listProducts(user.sub, query));
+  }
+
+  @Patch('products/:id/stock')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Adjust stock for a product and record the movement' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async adjustStock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('quantity') quantity: number,
+    @Body('reason') reason?: string,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.inventoryService.adjustStock(user.sub, id, Number(quantity), reason));
+  }
+
+  @Get('movements')
+  @ApiOperation({ summary: 'List stock movement history' })
+  async listMovements(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: Record<string, any>,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.inventoryService.listMovements(user.sub, query));
   }
 }

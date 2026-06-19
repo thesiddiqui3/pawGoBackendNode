@@ -7,12 +7,23 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 
+/** Returns distance in kilometres between two lat/lng points (Haversine). */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
 const INCLUDE_SHOP = {
-  shop: { select: { id: true, name: true, slug: true, city: true } },
+  shop: { select: { id: true, name: true, slug: true, city: true, latitude: true, longitude: true, serviceRadius: true } },
 } satisfies Prisma.ProductInclude;
 
 const ALLOWED_SORT = new Set(['price', 'createdAt', 'stock', 'name']);
@@ -60,10 +71,37 @@ export class ProductRepository {
     const sortField = query.sortBy && ALLOWED_SORT.has(query.sortBy) ? query.sortBy : 'createdAt';
     const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
+    // If customer lat/lng provided, restrict to shops whose service radius covers them
+    let nearbyShopIds: string[] | undefined;
+    if (query.lat != null && query.lng != null && !query.shopId) {
+      const shops = await this.prisma.shop.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          isVerified: true,
+          latitude: { not: null },
+          longitude: { not: null },
+        },
+        select: { id: true, latitude: true, longitude: true, serviceRadius: true },
+      });
+      nearbyShopIds = shops
+        .filter(s => {
+          const dist = haversineKm(query.lat!, query.lng!, s.latitude!, s.longitude!);
+          return dist <= (s.serviceRadius ?? 10);
+        })
+        .map(s => s.id);
+      // If no shops cover this location, return empty immediately
+      if (nearbyShopIds.length === 0) {
+        return buildPaginatedResponse([], 0, page, pageSize);
+      }
+    }
+
     const where: Prisma.ProductWhereInput = {
       deletedAt: null,
       isActive: true,
+      shop: { isActive: true, isVerified: true, deletedAt: null },
       ...(query.shopId && { shopId: query.shopId }),
+      ...(nearbyShopIds && { shopId: { in: nearbyShopIds } }),
       ...(query.category && { category: query.category }),
       ...(query.brand && { brand: { contains: query.brand, mode: 'insensitive' } }),
       ...(query.search && {

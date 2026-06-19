@@ -139,7 +139,8 @@ export class NotificationsService {
     let roleFilter: { role?: { in: PrismaUserRole[] } | PrismaUserRole } | undefined;
 
     if (dto.roles?.length) {
-      roleFilter = { role: { in: dto.roles as PrismaUserRole[] } };
+      const validRoles = dto.roles.filter(r => Object.values(PrismaUserRole).includes(r as PrismaUserRole)) as PrismaUserRole[];
+      if (validRoles.length) roleFilter = { role: { in: validRoles } };
     } else if (dto.target) {
       const roleMap: Record<BroadcastTarget, PrismaUserRole | null> = {
         [BroadcastTarget.ALL_USERS]: null,
@@ -155,7 +156,7 @@ export class NotificationsService {
     const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
-        status: 'ACTIVE',
+        status: { notIn: ['SUSPENDED' as any] },
         ...roleFilter,
       },
       select: { id: true },

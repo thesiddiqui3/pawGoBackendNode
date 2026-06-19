@@ -18,6 +18,8 @@ enum UserRole {
   SUPER_ADMIN
   PET_OWNER
   CLINIC_OWNER
+  CLINIC_MANAGER
+  RECEPTIONIST
   ASSISTANT
   SHOP_OWNER
   DELIVERY_PARTNER
@@ -94,6 +96,8 @@ enum DoctorSpecialization {
 enum ReviewTargetType {
   CLINIC
   ASSISTANT
+  SHOP
+  PRODUCT
 }
 
 enum AppointmentStatus {
@@ -191,17 +195,39 @@ enum VerificationDocType {
   GST_CERTIFICATE
   PAN_CARD
   AADHAAR
+  AADHAAR_CARD
   SHOP_ACT_LICENSE
   DRUG_LICENSE
   VETERINARY_LICENSE
   OWNER_PHOTO_ID
+  CLINIC_LICENSE
+  VET_COUNCIL_REGISTRATION
+  ADDRESS_PROOF
+  DEGREE_CERTIFICATE
+  DRIVING_LICENSE
+  VEHICLE_RC
+  VEHICLE_INSURANCE
+  PROFILE_PHOTO
   OTHER
 }
 
 enum VerificationDocStatus {
   PENDING
+  UNDER_REVIEW
   APPROVED
   REJECTED
+}
+
+enum CouponType {
+  FLAT
+  PERCENTAGE
+  FREE_DELIVERY
+}
+
+enum CouponStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,6 +277,8 @@ model User {
   notificationPreference NotificationPreference? @relation("UserNotificationPreference")
   serviceBookings        ServiceBooking[]        @relation("CustomerServiceBookings")
   complaints             Complaint[]             @relation("UserComplaints")
+  clinicStaff            ClinicStaff?
+  homeVisitsAsOwner      HomeVisit[]             @relation("HomeVisitOwner")
 
   @@index([email])
   @@index([phone])
@@ -338,6 +366,8 @@ model Pet {
   vaccinationReminders VaccinationReminder[]
   gallery              PetGallery[]
   serviceBookings      ServiceBooking[]
+  homeVisits           HomeVisit[]
+  prescriptions        Prescription[]
 
   @@index([ownerId])
   @@index([species])
@@ -385,6 +415,31 @@ model Clinic {
   totalReviews Int   @default(0)
 
   licenseNumber        String?
+  licenseExpiry        String?
+  gstNumber            String?
+
+  // Service radius for home visits (km)
+  serviceRadius        Int     @default(10)
+
+  // Contact
+  emergencyContact     String?
+
+  // Bank details
+  bankName             String?
+  bankAccount          String?
+  bankIfsc             String?
+
+  // Availability settings
+  lunchBreakEnabled    Boolean @default(false)
+  lunchBreakFrom       String? // HH:MM
+  lunchBreakTo         String? // HH:MM
+  maxDailyAppointments Int     @default(20)
+  emergencyAvailable   Boolean @default(true)
+  advanceBookingDays   Int     @default(30)
+  minNoticeMinutes     Int     @default(60)
+  clinicHolidays       Json    @default("[]") // [{ id, name, date, recurring }]
+  blockedDates         Json    @default("[]") // ["YYYY-MM-DD"]
+  lunchBreakBlocking   Boolean @default(false) // block bookings that overlap lunch break
 
   isActive             Boolean @default(true)
   isVerified           Boolean @default(false)
@@ -406,6 +461,10 @@ model Clinic {
   vaccinations        Vaccination[]
   petServices         PetService[]
   verificationDocs    VerificationDocument[] @relation("ClinicDocs")
+  gallery             ClinicGallery[]
+  staff               ClinicStaff[]
+  homeVisits          HomeVisit[]
+  prescriptions       Prescription[]
 
   @@index([city])
   @@index([state])
@@ -458,14 +517,18 @@ model Doctor {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  availability      DoctorAvailability[]
-  education         DoctorEducation[]
-  certifications    DoctorCertification[]
-  reviews           Review[]
-  appointments      Appointment[]
-  medicalRecords    MedicalRecord[]
+  availability         DoctorAvailability[]
+  education            DoctorEducation[]
+  certifications       DoctorCertification[]
+  reviews              Review[]
+  appointments         Appointment[] @relation("AppointmentDoctor")
+  assistedAppointments Appointment[] @relation("AppointmentAssistant")
+  medicalRecords       MedicalRecord[]
   vaccinations      Vaccination[]
   appointmentNotes  AppointmentNote[]
+  verificationDocs  VerificationDocument[] @relation("DoctorDocs")
+  homeVisits        HomeVisit[]
+  prescriptions     Prescription[]
 
   @@index([clinicId])
   @@index([rating])
@@ -526,6 +589,12 @@ model Review {
   clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   doctorId   String?
   doctor     Doctor?  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  shopId     String?
+  shop       Shop?    @relation("ShopReviews", fields: [shopId], references: [id], onDelete: Cascade)
+
+  clinicReply   String?
+  clinicReplyAt DateTime?
+  replyBy       String?
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -552,15 +621,17 @@ model Appointment {
   id                String            @id @default(uuid())
   appointmentNumber String            @unique
 
-  petId   String
-  pet     Pet    @relation(fields: [petId], references: [id], onDelete: Restrict)
-  ownerId String
-  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  petId   String?
+  pet     Pet?   @relation(fields: [petId], references: [id], onDelete: Restrict)
+  ownerId String?
+  owner   User?  @relation(fields: [ownerId], references: [id], onDelete: Restrict)
 
   clinicId String
   clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
   doctorId String
-  doctor   Doctor @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  doctor   Doctor  @relation("AppointmentDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+  assistantId String?
+  assistant   Doctor? @relation("AppointmentAssistant", fields: [assistantId], references: [id], onDelete: SetNull)
 
   appointmentDate DateTime          // stored as UTC date (time part ignored)
   startTime       String            // "10:00"
@@ -570,6 +641,10 @@ model Appointment {
   notes              String?
   status             AppointmentStatus @default(PENDING)
   cancellationReason String?
+
+  isWalkIn          Boolean  @default(false)
+  walkinOwnerName   String?
+  walkinPhone       String?
 
   rescheduledFromId String?
   rescheduledFrom   Appointment?  @relation("RescheduledFrom", fields: [rescheduledFromId], references: [id], onDelete: SetNull)
@@ -624,14 +699,18 @@ model AppointmentNote {
 
 model MedicalRecord {
   id            String      @id @default(uuid())
-  petId         String
-  pet           Pet         @relation(fields: [petId], references: [id], onDelete: Restrict)
+  petId         String?
+  pet           Pet?        @relation(fields: [petId], references: [id], onDelete: Restrict)
   doctorId      String
   doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   clinicId      String
   clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Restrict)
   appointmentId String?     @unique
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  walkinPetName   String?
+  walkinPetType   String?
+  walkinOwnerName String?
 
   visitDate      DateTime
   chiefComplaint String
@@ -657,17 +736,49 @@ model MedicalRecord {
 }
 
 model Prescription {
-  id           String        @id @default(uuid())
-  recordId     String
-  record       MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
-  medicineName String
-  dosage       String
-  frequency    String
-  duration     String
+  id       String         @id @default(uuid())
+  recordId String?
+  record   MedicalRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  petId    String?
+  pet      Pet?    @relation(fields: [petId], references: [id], onDelete: Restrict)
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  doctorId String?
+  doctor   Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+
+  walkinPatientName String?
+  walkinPetName     String?
+  walkinPetType     String?
+
+  medicineName String   @default("")
+  dosage       String   @default("")
+  frequency    String   @default("")
+  duration     String   @default("")
   instructions String?
+  medicines    Json?
+  diagnosis    String?
+  status       PrescriptionStatus @default(ACTIVE)
+  prescribedAt DateTime           @default(now())
+  expiresAt    DateTime?
+  notes        String?
+  createdBy    String
+  updatedBy    String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   @@index([recordId])
+  @@index([petId])
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([status])
   @@map("prescriptions")
+}
+
+enum PrescriptionStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
 }
 
 model MedicalAttachment {
@@ -691,13 +802,19 @@ model MedicalAttachment {
 
 model Vaccination {
   id               String    @id @default(uuid())
-  petId            String
-  pet              Pet       @relation(fields: [petId], references: [id], onDelete: Restrict)
+  petId            String?
+  pet              Pet?      @relation(fields: [petId], references: [id], onDelete: Restrict)
   vaccineName      String
+  vaccineType      String?
   manufacturer     String?
   batchNumber      String?
   dateAdministered DateTime
   nextDueDate      DateTime?
+
+  walkinPetName    String?
+  walkinPetType    String?
+  walkinOwnerName  String?
+  walkinOwnerPhone String?
 
   doctorId String?
   doctor   Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull)
@@ -825,6 +942,24 @@ model Shop {
   pincode     String?
   latitude    Float?
   longitude   Float?
+  // Delivery settings
+  minOrderAmount       Float    @default(0)
+  deliveryCharge       Float    @default(0)
+  freeDeliveryAbove    Float    @default(0)
+  serviceRadius        Int      @default(10)
+
+  // Working hours stored as JSON: { monday: { open, from, to }, ... }
+  workingHours         Json?
+
+  // Legal / documents
+  gstNumber            String?
+  shopRegNumber        String?
+
+  // Bank details
+  bankName             String?
+  bankAccount          String?
+  bankIfsc             String?
+
   isActive             Boolean  @default(true)
   isVerified           Boolean  @default(false)
   documentsSubmitted   Boolean  @default(false)
@@ -839,11 +974,41 @@ model Shop {
   products             Product[]
   orders               Order[]
   verificationDocs     VerificationDocument[] @relation("ShopDocs")
+  coupons              Coupon[]
+  reviews              Review[] @relation("ShopReviews")
 
   @@index([ownerId])
   @@index([isActive])
   @@index([city])
   @@map("shops")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Coupon / Promotion
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Coupon {
+  id             String       @id @default(uuid())
+  shopId         String
+  shop           Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  code           String
+  type           CouponType   @default(FLAT)
+  value          Float        @default(0)
+  description    String?
+  minOrderAmount Float        @default(0)
+  usageLimit     Int          @default(100)
+  usedCount      Int          @default(0)
+  startDate      DateTime     @default(now())
+  expiryDate     DateTime
+  status         CouponStatus @default(ACTIVE)
+  createdBy      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([shopId, code])
+  @@index([shopId])
+  @@index([status])
+  @@map("coupons")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -876,8 +1041,9 @@ model Product {
   updatedAt   DateTime        @updatedAt
   deletedAt   DateTime?
 
-  cartItems   CartItem[]
-  orderItems  OrderItem[]
+  cartItems      CartItem[]
+  orderItems     OrderItem[]
+  stockMovements StockMovement[]
 
   @@index([shopId])
   @@index([category])
@@ -896,6 +1062,24 @@ model ProductImage {
   sortOrder Int      @default(0)
   @@index([productId])
   @@map("product_images")
+}
+
+model StockMovement {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  shopId      String
+  type        String   // in | out | adjustment | reserved | returned
+  quantity    Int
+  stockBefore Int
+  stockAfter  Int
+  reason      String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  @@index([productId])
+  @@index([shopId])
+  @@map("stock_movements")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1089,10 +1273,11 @@ model DeliveryPartner {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  assignments      DeliveryAssignment[]
-  locationUpdates  LocationUpdate[]
-  ratings          DeliveryRating[]
-  earnings         Earning[]
+  assignments           DeliveryAssignment[]
+  locationUpdates       LocationUpdate[]
+  ratings               DeliveryRating[]
+  earnings              Earning[]
+  verificationDocs      VerificationDocument[] @relation("DeliveryPartnerDocs")
 
   @@index([isApproved])
   @@index([isOnline])
@@ -1179,6 +1364,14 @@ model Earning {
 // Notification Enums
 // ─────────────────────────────────────────────────────────────────────────────
 
+enum HomeVisitStatus {
+  REQUESTED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum NotificationType {
   BOOKING_CREATED
   BOOKING_CONFIRMED
@@ -1198,6 +1391,12 @@ enum NotificationType {
   DELIVERY_ACCEPTED
   DELIVERY_COMPLETED
   DELIVERY_FAILED
+  VERIFICATION_APPROVED
+  VERIFICATION_REJECTED
+  HOME_VISIT_REQUESTED
+  HOME_VISIT_ASSIGNED
+  HOME_VISIT_COMPLETED
+  WALK_IN_CREATED
 }
 
 enum DevicePlatform {
@@ -1258,17 +1457,21 @@ model DeviceToken {
 }
 
 model NotificationPreference {
-  id                      String   @id @default(uuid())
-  userId                  String   @unique
-  user                    User     @relation("UserNotificationPreference", fields: [userId], references: [id], onDelete: Cascade)
-  bookingNotifications    Boolean  @default(true)
-  orderNotifications      Boolean  @default(true)
-  reviewNotifications     Boolean  @default(true)
-  vaccinationReminders    Boolean  @default(true)
-  marketingNotifications  Boolean  @default(true)
-  systemNotifications     Boolean  @default(true)
-  deliveryNotifications   Boolean  @default(true)
-  updatedAt               DateTime @updatedAt
+  id                          String   @id @default(uuid())
+  userId                      String   @unique
+  user                        User     @relation("UserNotificationPreference", fields: [userId], references: [id], onDelete: Cascade)
+  bookingNotifications        Boolean  @default(true)
+  cancellationNotifications   Boolean  @default(true)
+  orderNotifications          Boolean  @default(true)
+  reviewNotifications         Boolean  @default(true)
+  assistantNotifications      Boolean  @default(false)
+  vaccinationReminders        Boolean  @default(true)
+  marketingNotifications      Boolean  @default(true)
+  systemNotifications         Boolean  @default(true)
+  deliveryNotifications       Boolean  @default(true)
+  dailySummaryEmail           Boolean  @default(false)
+  weeklySummaryEmail          Boolean  @default(true)
+  updatedAt                   DateTime @updatedAt
 
   @@map("notification_preferences")
 }
@@ -1434,6 +1637,10 @@ model VerificationDocument {
   clinic       Clinic?               @relation("ClinicDocs", fields: [clinicId], references: [id], onDelete: Cascade)
   shopId       String?
   shop         Shop?                 @relation("ShopDocs", fields: [shopId], references: [id], onDelete: Cascade)
+  doctorId            String?
+  doctor              Doctor?               @relation("DoctorDocs", fields: [doctorId], references: [id], onDelete: Cascade)
+  deliveryPartnerId   String?
+  deliveryPartner     DeliveryPartner?      @relation("DeliveryPartnerDocs", fields: [deliveryPartnerId], references: [id], onDelete: Cascade)
   docType      VerificationDocType
   fileUrl      String
   filePublicId String
@@ -1447,6 +1654,8 @@ model VerificationDocument {
 
   @@index([clinicId])
   @@index([shopId])
+  @@index([doctorId])
+  @@index([deliveryPartnerId])
   @@index([status])
   @@map("verification_documents")
 }
@@ -1470,4 +1679,73 @@ model AuditLog {
   @@index([entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clinic Portal Models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ClinicGallery {
+  id         String   @id @default(uuid())
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  imageUrl   String
+  publicId   String
+  caption    String?
+  category   String?
+  uploadedBy String
+  uploadedAt DateTime @default(now())
+
+  @@index([clinicId])
+  @@map("clinic_gallery")
+}
+
+model ClinicStaff {
+  id        String   @id @default(uuid())
+  clinicId  String
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      UserRole
+  isActive  Boolean  @default(true)
+  addedBy   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId])
+  @@index([role])
+  @@map("clinic_staff")
+}
+
+model HomeVisit {
+  id           String          @id @default(uuid())
+  clinicId     String
+  clinic       Clinic          @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  doctorId     String?
+  doctor       Doctor?         @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  petId        String
+  pet          Pet             @relation(fields: [petId], references: [id], onDelete: Restrict)
+  ownerId      String
+  owner        User            @relation("HomeVisitOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  address      String
+  city         String?
+  scheduledAt  DateTime
+  status       HomeVisitStatus @default(REQUESTED)
+  notes        String?
+  fee          Float?
+  cancelReason String?
+  assignedAt   DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+  createdBy    String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("home_visits")
 }

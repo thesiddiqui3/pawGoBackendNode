@@ -1,5 +1,28 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { UserRole } from '../../../common/enums';
+
+export class CreateClinicStaffDto {
+  @ApiProperty({ example: 'Priya' })
+  @IsString() @IsNotEmpty()
+  firstName!: string;
+
+  @ApiProperty({ example: 'Sharma' })
+  @IsString() @IsNotEmpty()
+  lastName!: string;
+
+  @ApiProperty({ example: 'priya@clinic.com' })
+  @IsEmail()
+  email!: string;
+
+  @ApiPropertyOptional({ example: '+919876543210' })
+  @IsOptional() @IsString()
+  phone?: string;
+
+  @ApiProperty({ enum: [UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT], example: UserRole.RECEPTIONIST })
+  @IsEnum([UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT])
+  role!: UserRole;
+}
 
 export class CreateAssistantDto {
   @ApiProperty({ example: 'Ravi' })
@@ -35,4 +58,12 @@ export class CreateDeliveryPartnerDto {
   @ApiPropertyOptional()
   @IsOptional() @IsString()
   phone?: string;
+
+  @ApiPropertyOptional({ example: 'Motorcycle' })
+  @IsOptional() @IsString()
+  vehicleType?: string;
+
+  @ApiPropertyOptional({ example: 'MH01AB1234' })
+  @IsOptional() @IsString()
+  vehicleNumber?: string;
 }

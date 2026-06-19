@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import * as bcryptjs from 'bcryptjs';
+import * as crypto from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
+import { UserRole } from '../../common/enums';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 export type SafeUser = Omit<User, 'passwordHash'>;
@@ -107,6 +110,40 @@ export class UsersService {
     await this.prisma.user.update({
       where: { id: userId },
       data: { lastLoginAt: new Date() },
+    });
+  }
+
+  async findOrCreateDoctorUser(params: {
+    email: string;
+    firstName: string;
+    lastName?: string;
+    phone?: string;
+  }): Promise<User> {
+    const existing = await this.findByEmail(params.email);
+    if (existing) return existing;
+
+    const tempPassword = crypto.randomBytes(12).toString('hex');
+    const passwordHash = await bcryptjs.hash(tempPassword, 10);
+
+    // Check phone uniqueness before attempting insert
+    let safePhone: string | null = params.phone ?? null;
+    if (safePhone) {
+      const phoneInUse = await this.prisma.user.count({ where: { phone: safePhone } });
+      if (phoneInUse > 0) safePhone = null;
+    }
+
+    return this.prisma.user.create({
+      data: {
+        email: params.email,
+        firstName: params.firstName,
+        lastName: params.lastName ?? '',
+        phone: safePhone,
+        passwordHash,
+        role: UserRole.ASSISTANT,
+        status: 'ACTIVE' as any,
+        isEmailVerified: false,
+        mustChangePassword: true,
+      },
     });
   }
 

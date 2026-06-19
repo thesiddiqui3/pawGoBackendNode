@@ -79,16 +79,18 @@ describe('SystemSettingsService', () => {
   });
 
   describe('updateSetting', () => {
-    it('updates existing setting', async () => {
-      repo.findByKey.mockResolvedValue({ key: 'tax_percent', value: 18 });
-      repo.updateByKey.mockResolvedValue({ key: 'tax_percent', value: 20 });
+    it('upserts the setting using snake_case key', async () => {
+      repo.upsertSetting.mockResolvedValue({ key: 'tax_percent', value: 20 });
+      repo.findByKey.mockResolvedValue(null);
       await service.updateSetting('tax_percent', { value: 20 }, ADMIN_ID);
-      expect(repo.updateByKey).toHaveBeenCalledWith('tax_percent', expect.objectContaining({ value: 20 }));
+      expect(repo.upsertSetting).toHaveBeenCalledWith('tax_percent', 20, expect.objectContaining({ updatedBy: ADMIN_ID }));
     });
 
-    it('throws NotFoundException for missing key', async () => {
-      repo.findByKey.mockResolvedValue(null);
-      await expect(service.updateSetting('missing', { value: 1 }, ADMIN_ID)).rejects.toThrow(NotFoundException);
+    it('also updates camelCase key when it exists', async () => {
+      repo.upsertSetting.mockResolvedValue({ key: 'taxPercent', value: 20 });
+      repo.findByKey.mockResolvedValue({ key: 'taxPercent', value: 18 });
+      await service.updateSetting('taxPercent', { value: 20 }, ADMIN_ID);
+      expect(repo.upsertSetting).toHaveBeenCalledWith('tax_percent', 20, expect.objectContaining({ updatedBy: ADMIN_ID }));
     });
   });
 

@@ -27,13 +27,13 @@ export class ClinicQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ value }) => value === 'true' || value === true ? true : value === 'false' || value === false ? false : undefined)
   @IsBoolean()
   verified?: boolean;
 
   @ApiPropertyOptional({ example: false, description: 'Filter by active status (admin only). Omit for default active=true.' })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ value }) => value === 'true' || value === true ? true : value === 'false' || value === false ? false : undefined)
   @IsBoolean()
   isActive?: boolean;
 

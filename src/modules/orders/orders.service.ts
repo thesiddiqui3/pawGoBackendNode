@@ -13,6 +13,7 @@ import { UserRole } from '../../common/enums';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { OrderRepository } from './order.repository';
+import { PrismaService } from '../../database/prisma.service';
 
 // Allowed forward transitions for orders
 const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
@@ -42,7 +43,24 @@ export class OrdersService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly prisma: PrismaService,
   ) {}
+
+  private async resolveShopIdByOwner(ownerId: string): Promise<string> {
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId }, select: { id: true } });
+    if (!shop) throw new NotFoundException('Shop not found for this owner');
+    return shop.id;
+  }
+
+  async findByOwner(ownerId: string, query: OrderQueryDto): Promise<PaginatedResponseDto<object>> {
+    const shopId = await this.resolveShopIdByOwner(ownerId);
+    return this.orderRepository.findMany(this.buildWhere({ ...query, shopId }), query);
+  }
+
+  async getShopStatsByOwner(ownerId: string): Promise<object> {
+    const shopId = await this.resolveShopIdByOwner(ownerId);
+    return this.orderRepository.getStats({ shopId });
+  }
 
   // ─── Customer: list own orders ────────────────────────────────────────────
 
@@ -146,6 +164,43 @@ export class OrdersService {
     return updated;
   }
 
+  // ─── Shop: cancel order ───────────────────────────────────────────────────
+
+  async cancelByShop(id: string, reason: string | undefined, requesterId: string): Promise<Order> {
+    const order = await this.orderRepository.findById(id);
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (!ORDER_TRANSITIONS[order.orderStatus].includes(OrderStatus.CANCELLED)) {
+      throw new BadRequestException(`Cannot cancel an order with status ${order.orderStatus}`);
+    }
+
+    const updated = await this.orderRepository.updateStatus(id, OrderStatus.CANCELLED, {
+      cancelledAt: new Date(),
+      cancellationReason: reason,
+      cancelledBy: requesterId,
+      updatedBy: requesterId,
+    });
+    await this.orderRepository.addTimeline(id, OrderStatus.CANCELLED, requesterId, reason ?? 'Cancelled by shop');
+    this.emitEvent(OrderEvent.CANCELLED, updated);
+    return updated;
+  }
+
+  // ─── Shop: update internal notes ─────────────────────────────────────────
+
+  async addNote(id: string, notes: string, requesterId: string): Promise<Order> {
+    const order = await this.orderRepository.findById(id);
+    if (!order) throw new NotFoundException('Order not found');
+    return this.orderRepository.addNote(id, notes);
+  }
+
+  // ─── Shop: assign delivery partner ───────────────────────────────────────
+
+  async assignDeliveryPartner(id: string, partnerId: string, requesterId: string): Promise<Order> {
+    const order = await this.orderRepository.findById(id);
+    if (!order) throw new NotFoundException('Order not found');
+    return this.orderRepository.assignPartner(id, partnerId, requesterId);
+  }
+
   // ─── Tracking timeline ────────────────────────────────────────────────────
 
   async getTracking(id: string, requesterId: string, requesterRole: string) {
@@ -213,6 +268,16 @@ export class OrdersService {
       const start = new Date(Date.UTC(y, m - 1, d));
       const end = new Date(start.getTime() + 86_400_000);
       where['placedAt'] = { gte: start, lt: end };
+    }
+    if (query.search) {
+      where['OR'] = [
+        { orderNumber: { contains: query.search, mode: 'insensitive' } },
+        { customer: { OR: [
+          { firstName: { contains: query.search, mode: 'insensitive' } },
+          { lastName: { contains: query.search, mode: 'insensitive' } },
+          { phone: { contains: query.search } },
+        ]}},
+      ];
     }
     return where;
   }

@@ -320,7 +320,7 @@ export class AdminUserService {
   // ─── Broadcast Notification ───────────────────────────────────────────────
 
   async broadcastNotification(dto: BroadcastDto) {
-    const where: any = { deletedAt: null, status: 'ACTIVE' };
+    const where: any = { deletedAt: null, status: { notIn: ['SUSPENDED'] } };
     if (dto.roles?.length) where.role = { in: dto.roles };
 
     const users = await this.prisma.user.findMany({

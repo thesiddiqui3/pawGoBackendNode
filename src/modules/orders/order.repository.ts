@@ -13,6 +13,9 @@ const ORDER_INCLUDE: Prisma.OrderInclude = {
   shop: { select: { id: true, name: true, slug: true, phone: true } },
   customer: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   timeline: { orderBy: { createdAt: 'asc' } },
+  deliveryAssignment: {
+    include: { deliveryPartner: { include: { user: { select: { id: true, firstName: true, lastName: true, phone: true } } } } },
+  },
 };
 
 @Injectable()
@@ -90,6 +93,23 @@ export class OrderRepository {
       where: { orderId },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async addNote(id: string, notes: string): Promise<Order> {
+    return this.prisma.order.update({
+      where: { id },
+      data: { notes },
+      include: ORDER_INCLUDE,
+    });
+  }
+
+  async assignPartner(orderId: string, deliveryPartnerId: string, assignedBy: string): Promise<Order> {
+    await this.prisma.deliveryAssignment.upsert({
+      where: { orderId },
+      create: { orderId, deliveryPartnerId, assignedBy },
+      update: { deliveryPartnerId, assignedBy },
+    });
+    return this.prisma.order.findUnique({ where: { id: orderId }, include: ORDER_INCLUDE }) as Promise<Order>;
   }
 
   async getStats(where: Prisma.OrderWhereInput): Promise<object> {

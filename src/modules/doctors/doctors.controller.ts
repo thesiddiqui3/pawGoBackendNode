@@ -63,33 +63,39 @@ export class DoctorsController {
     return ApiResponseDto.success(doctor, 'Doctor profile created');
   }
 
-  // GET /doctors/my-clinic — clinic owner sees their clinic's doctors (before /:id)
+  // GET /doctors/my-clinic — clinic staff sees their clinic's doctors
   @Get('my-clinic')
   @ApiBearerAuth('access-token')
-  @Roles(UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: "List all doctors at the clinic owner's clinic" })
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: "List all doctors at the requester's clinic" })
   async findMyClinicDoctors(
     @CurrentUser() user: JwtPayload,
     @Query() query: DoctorQueryDto,
   ): Promise<ApiResponseDto<object>> {
-    const data = await this.doctorsService.findMyClinicDoctors(user.sub, query);
+    const data = await this.doctorsService.findMyClinicDoctors(user.sub, query, user.role);
     return ApiResponseDto.success(data);
   }
 
   @Public()
   @Get()
   @ApiOperation({ summary: 'Search and list doctors' })
-  async findMany(@Query() query: DoctorQueryDto): Promise<ApiResponseDto<object>> {
-    const data = await this.doctorsService.findMany(query);
+  async findMany(
+    @Query() query: DoctorQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const data = await this.doctorsService.findMany(query, user?.role);
     return ApiResponseDto.success(data);
   }
 
-  @Public()
   @Get(':id')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get doctor profile details' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
-    const doctor = await this.doctorsService.findOne(id);
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const doctor = await this.doctorsService.findOne(id, user?.role);
     return ApiResponseDto.success(doctor);
   }
 
@@ -139,6 +145,22 @@ export class DoctorsController {
     return ApiResponseDto.success(doctor, 'Photo uploaded');
   }
 
+  // ─── Delete (soft-delete with Cloudinary photo cleanup) ──────────────────
+
+  @Delete(':id')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a doctor profile (clinic owner for own clinic doctors, or admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async deleteDoctor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<null>> {
+    await this.doctorsService.deleteDoctor(id, user.sub, user.role);
+    return ApiResponseDto.success(null, 'Doctor deleted');
+  }
+
   // ─── Deactivate (clinic owner removes doctor from their clinic) ────────────
 
   @Patch(':id/deactivate')
@@ -153,6 +175,22 @@ export class DoctorsController {
   ): Promise<ApiResponseDto<object>> {
     const doctor = await this.doctorsService.deactivateByClinicOwner(id, user.sub, user.role);
     return ApiResponseDto.success(doctor, 'Doctor deactivated');
+  }
+
+  // ─── Activate ─────────────────────────────────────────────────────────────
+
+  @Patch(':id/activate')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.CLINIC_OWNER, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reactivate a doctor (clinic owner for own clinic, or admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const doctor = await this.doctorsService.activateByClinicOwner(id, user.sub, user.role);
+    return ApiResponseDto.success(doctor, 'Doctor activated');
   }
 
   // ─── Availability management ──────────────────────────────────────────────

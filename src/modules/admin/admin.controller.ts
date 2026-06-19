@@ -140,10 +140,10 @@ class AdminShopQueryDto extends PaginationDto {
   @IsOptional() @IsString() city?: string;
 
   @ApiPropertyOptional()
-  @IsOptional() @Transform(({ value }) => value === 'true' || value === true) @IsBoolean() isActive?: boolean;
+  @IsOptional() @Transform(({ value }) => value === 'true' || value === true ? true : value === 'false' || value === false ? false : undefined) @IsBoolean() isActive?: boolean;
 
   @ApiPropertyOptional()
-  @IsOptional() @Transform(({ value }) => value === 'true' || value === true) @IsBoolean() isVerified?: boolean;
+  @IsOptional() @Transform(({ value }) => value === 'true' || value === true ? true : value === 'false' || value === false ? false : undefined) @IsBoolean() isVerified?: boolean;
 }
 
 class AdminPetQueryDto extends PaginationDto {
@@ -294,8 +294,9 @@ export class AdminController {
 
   @Get('clinics')
   @ApiOperation({ summary: 'List all clinics with filters (admin)' })
-  async allClinics(@Query() query: ClinicQueryDto): Promise<ApiResponseDto<object>> {
-    const result = await this.clinicRepo.findMany(query);
+  async allClinics(@Query() query: ClinicQueryDto, @Query('verified') verifiedRaw?: string): Promise<ApiResponseDto<object>> {
+    const verifiedParsed = verifiedRaw === 'false' ? false : verifiedRaw === 'true' ? true : undefined;
+    const result = await this.clinicRepo.findMany({ ...query, ...(verifiedParsed !== undefined && { verified: verifiedParsed }) });
     return ApiResponseDto.success(result);
   }
 
@@ -325,6 +326,14 @@ export class AdminController {
   async deleteClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
     await this.clinicsSvc.remove(id, '', UserRole.SUPER_ADMIN);
     return ApiResponseDto.success(null, 'Clinic deleted');
+  }
+
+  @Patch('clinics/:id/verify')
+  @ApiOperation({ summary: 'Verify / approve a clinic (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async verifyClinic(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const clinic = await this.clinicsSvc.verify(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(clinic, 'Clinic approved');
   }
 
   @Patch('clinics/:id/suspend')
@@ -362,14 +371,20 @@ export class AdminController {
   // ─── Shop List + Detail ───────────────────────────────────────────────────
 
   @Get('shops')
-  @ApiOperation({ summary: 'List all verified shops with filters (admin)' })
-  async allShops(@Query() query: AdminShopQueryDto): Promise<ApiResponseDto<object>> {
+  @ApiOperation({ summary: 'List shops with filters (admin)' })
+  async allShops(@Query() query: AdminShopQueryDto, @Query('isVerified') isVerifiedRaw?: string, @Query('isActive') isActiveRaw?: string): Promise<ApiResponseDto<object>> {
+    const isVerified = isVerifiedRaw === 'false' ? false : isVerifiedRaw === 'true' ? true : true;
+    const isActiveParsed = isActiveRaw === 'false' ? false : isActiveRaw === 'true' ? true : undefined;
     const shops = await this.shopRepo.findMany({
       search: query.search,
       city: query.city,
-      // Default to verified=true so unverified shops only appear in the verification section
-      isVerified: query.isVerified !== undefined ? query.isVerified : true,
-      ...(query.isActive !== undefined && { isActive: query.isActive }),
+      isVerified,
+      // When fetching unverified (verification queue), don't restrict by isActive
+      ...(isActiveParsed !== undefined
+        ? { isActive: isActiveParsed }
+        : isVerified ? { isActive: true } : {}),
+      page:  query.page  ?? 1,
+      limit: query.limit ?? 20,
     });
     return ApiResponseDto.success(shops);
   }
@@ -400,6 +415,14 @@ export class AdminController {
   async deleteShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<null>> {
     await this.shopsSvc.remove(id, UserRole.SUPER_ADMIN);
     return ApiResponseDto.success(null, 'Shop deleted');
+  }
+
+  @Patch('shops/:id/verify')
+  @ApiOperation({ summary: 'Verify / approve a shop (admin)' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async verifyShop(@Param('id', ParseUUIDPipe) id: string): Promise<ApiResponseDto<object>> {
+    const shop = await this.shopsSvc.verify(id, '', UserRole.SUPER_ADMIN);
+    return ApiResponseDto.success(shop, 'Shop verified');
   }
 
   @Patch('shops/:id/suspend')
@@ -824,6 +847,7 @@ export class AdminController {
       ...((dto.price !== undefined || dto.basePrice !== undefined) && { price: dto.basePrice ?? dto.price }),
       ...(dto.duration !== undefined && { duration: dto.duration }),
       ...(dto.maxPetsPerSlot !== undefined && { maxPetsPerSlot: dto.maxPetsPerSlot }),
+      ...(dto.isActive !== undefined && { isActive: dto.isActive }),
     });
     return ApiResponseDto.success(updated, 'Service updated');
   }

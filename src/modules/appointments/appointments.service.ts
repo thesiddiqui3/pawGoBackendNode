@@ -29,6 +29,7 @@ import { CancelAppointmentDto } from './dto/cancel-appointment.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 import { UpdateAppointmentStatusDto } from './dto/update-appointment-status.dto';
+import { WalkInAppointmentDto } from './dto/walk-in-appointment.dto';
 
 // Map JS Date.getDay() (0=Sunday) to DayOfWeek enum strings
 const JS_DAY_TO_ENUM = [
@@ -139,6 +140,76 @@ export class AppointmentsService {
     return appointment;
   }
 
+  // ─── Walk-in appointment (reception creates for any visitor) ─────────────
+
+  async createWalkIn(dto: WalkInAppointmentDto, requesterId: string, requesterRole: string): Promise<AppointmentDetail> {
+    // Resolve clinic for the requester
+    let clinicId: string;
+    if (requesterRole === UserRole.SUPER_ADMIN) {
+      const doctor = await this.doctorRepository.findById(dto.doctorId);
+      if (!doctor) throw new NotFoundException('Doctor not found');
+      if (!doctor.clinicId) throw new BadRequestException('Doctor is not assigned to a clinic');
+      clinicId = doctor.clinicId;
+    } else {
+      const clinic = await this.clinicRepository.findByCreatedBy(requesterId);
+      if (!clinic) {
+        // Might be staff — look up clinic through ClinicStaff
+        const staffRecord = await this.prisma.clinicStaff.findUnique({
+          where: { userId: requesterId },
+          select: { clinicId: true },
+        });
+        if (!staffRecord) throw new NotFoundException('You are not associated with a clinic');
+        clinicId = staffRecord.clinicId;
+      } else {
+        clinicId = clinic.id;
+      }
+    }
+
+    // Validate doctor belongs to clinic
+    const doctor = await this.doctorRepository.findById(dto.doctorId);
+    if (!doctor || !doctor.isActive) throw new NotFoundException('Doctor not found or inactive');
+    if (doctor.clinicId !== clinicId) throw new BadRequestException('Doctor does not belong to your clinic');
+
+    const appointmentDate = this.parseDate(dto.appointmentDate);
+    const slotDuration = 30;
+    const endTime = dto.endTime ?? this.addMinutes(dto.startTime, slotDuration);
+
+    // Double-booking check
+    const conflict = await this.appointmentRepository.existsConflict(dto.doctorId, appointmentDate, dto.startTime);
+    if (conflict) throw new BadRequestException('This time slot is already booked');
+
+    // Validate: either registered (petId+ownerId) or anonymous (walkinOwnerName required)
+    if (!dto.petId && !dto.walkinOwnerName) {
+      throw new BadRequestException(
+        'Provide petId + ownerId for a registered patient, or walkinOwnerName for an unregistered walk-in',
+      );
+    }
+
+    const appointmentNumber = await this.appointmentRepository.generateAppointmentNumber();
+
+    const appointment = await this.appointmentRepository.create({
+      appointmentNumber,
+      ...(dto.petId ? { pet: { connect: { id: dto.petId } } } : {}),
+      ...(dto.ownerId ? { owner: { connect: { id: dto.ownerId } } } : {}),
+      clinic: { connect: { id: clinicId } },
+      doctor: { connect: { id: dto.doctorId } },
+      appointmentDate,
+      startTime: dto.startTime,
+      endTime,
+      reason: dto.reason,
+      notes: dto.notes,
+      slotDurationMinutes: slotDuration,
+      status: 'CONFIRMED',
+      isWalkIn: true,
+      walkinOwnerName: dto.walkinOwnerName,
+      walkinPhone: dto.walkinPhone,
+      createdBy: requesterId,
+    });
+
+    this.logger.log(`Walk-in appointment created: ${appointment.appointmentNumber}`);
+    return appointment;
+  }
+
   // ─── Available slots ───────────────────────────────────────────────────────
 
   async getAvailableSlots(doctorId: string, query: AvailableSlotsQueryDto): Promise<string[]> {
@@ -193,17 +264,31 @@ export class AppointmentsService {
     const appt = await this.appointmentRepository.findById(id);
     if (!appt) throw new NotFoundException('Appointment not found');
 
-    if (!this.isAdmin(requesterRole) && appt.ownerId !== requesterId) {
-      // Doctors can also view appointments assigned to them
+    if (this.isAdmin(requesterRole)) return appt;
+
+    // Pet owners can view their own appointments
+    if (appt.ownerId === requesterId) return appt;
+
+    // Doctors can view their assigned appointments
+    if (requesterRole === UserRole.ASSISTANT) {
       const doctorProfile = await this.prisma.doctor.findUnique({
         where: { userId: requesterId },
         select: { id: true },
       });
-      if (!doctorProfile || appt.doctorId !== doctorProfile.id) {
-        throw new ForbiddenException('Access denied');
-      }
+      if (doctorProfile && appt.doctorId === doctorProfile.id) return appt;
     }
-    return appt;
+
+    // Clinic staff can view appointments at their clinic
+    if (
+      requesterRole === UserRole.CLINIC_OWNER ||
+      requesterRole === UserRole.CLINIC_MANAGER ||
+      requesterRole === UserRole.RECEPTIONIST
+    ) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (clinicId && appt.clinicId === clinicId) return appt;
+    }
+
+    throw new ForbiddenException('Access denied');
   }
 
   // ─── Admin / clinic list ───────────────────────────────────────────────────
@@ -220,6 +305,19 @@ export class AppointmentsService {
       this.buildWhere({ ...query, clinicId }),
       query,
     );
+  }
+
+  async findMyClinicAppointments(
+    requesterId: string,
+    requesterRole: string,
+    query: AppointmentQueryDto,
+  ): Promise<PaginatedResponseDto<AppointmentDetail>> {
+    if (this.isAdmin(requesterRole)) {
+      return this.appointmentRepository.findMany(this.buildWhere(query), query);
+    }
+    const clinicId = await this.resolveStaffClinicId(requesterId);
+    if (!clinicId) throw new NotFoundException('You are not associated with a clinic');
+    return this.appointmentRepository.findMany(this.buildWhere({ ...query, clinicId }), query);
   }
 
   async findByDoctor(
@@ -355,6 +453,74 @@ export class AppointmentsService {
     return updated;
   }
 
+  // ─── Assign doctor / assistant ────────────────────────────────────────────
+
+  async assignDoctor(
+    id: string,
+    doctorId: string,
+    requesterId: string,
+    requesterRole: string,
+  ): Promise<AppointmentDetail> {
+    const appt = await this.appointmentRepository.findRaw(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+
+    const isAdmin = this.isAdmin(requesterRole);
+    if (!isAdmin) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (!clinicId || appt.clinicId !== clinicId)
+        throw new ForbiddenException('You do not have permission to assign a doctor to this appointment');
+    }
+
+    const doctor = await this.doctorRepository.findById(doctorId);
+    if (!doctor || !doctor.isActive) throw new NotFoundException('Doctor not found or inactive');
+
+    const updated = await this.appointmentRepository.update(id, {
+      doctor: { connect: { id: doctorId } },
+      updatedBy: requesterId,
+    });
+    this.logger.log(`Appointment ${id} assigned to doctor ${doctorId}`);
+    return updated;
+  }
+
+  async assignAssistant(
+    id: string,
+    assistantId: string,
+    requesterId: string,
+    requesterRole: string,
+  ): Promise<AppointmentDetail> {
+    const appt = await this.appointmentRepository.findRaw(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+
+    const isAdmin = this.isAdmin(requesterRole);
+    if (!isAdmin) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (!clinicId || appt.clinicId !== clinicId)
+        throw new ForbiddenException('You do not have permission to assign an assistant to this appointment');
+    }
+
+    const updated = await this.appointmentRepository.update(id, {
+      assistant: assistantId ? { connect: { id: assistantId } } : { disconnect: true },
+      updatedBy: requesterId,
+    });
+    this.logger.log(`Appointment ${id} assigned to assistant ${assistantId}`);
+    return updated;
+  }
+
+  async updateNotes(id: string, notes: string, requesterId: string, requesterRole: string): Promise<AppointmentDetail> {
+    const appt = await this.appointmentRepository.findRaw(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+
+    if (!this.isAdmin(requesterRole)) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (!clinicId || appt.clinicId !== clinicId)
+        throw new ForbiddenException('You do not have permission to update this appointment');
+    }
+
+    const updated = await this.appointmentRepository.update(id, { notes, updatedBy: requesterId });
+    this.logger.log(`Appointment ${id} notes updated`);
+    return updated;
+  }
+
   // ─── Statistics ────────────────────────────────────────────────────────────
 
   async getAdminStats() {
@@ -423,14 +589,19 @@ export class AppointmentsService {
   }
 
   private assertOwnerOrAdmin(
-    ownerId: string,
+    ownerId: string | null,
     requesterId: string,
     role: string,
     action: string,
   ): void {
-    if (ownerId !== requesterId && !this.isAdmin(role)) {
-      throw new ForbiddenException(`You do not have permission to ${action} this appointment`);
-    }
+    if (this.isAdmin(role)) return;
+    if (ownerId === requesterId) return;
+    if (
+      role === UserRole.CLINIC_OWNER ||
+      role === UserRole.CLINIC_MANAGER ||
+      role === UserRole.RECEPTIONIST
+    ) return;
+    throw new ForbiddenException(`You do not have permission to ${action} this appointment`);
   }
 
   private async assertStatusPermission(
@@ -442,7 +613,7 @@ export class AppointmentsService {
     const isAdmin = this.isAdmin(requesterRole);
     if (isAdmin) return;
 
-    // Doctors can move: confirmed→checked_in, checked_in→in_progress, in_progress→completed, confirmed→no_show
+    // Doctors can update status for their own appointments
     if (requesterRole === UserRole.ASSISTANT) {
       const doctorProfile = await this.prisma.doctor.findUnique({
         where: { userId: requesterId },
@@ -451,20 +622,36 @@ export class AppointmentsService {
       if (doctorProfile && appt.doctorId === doctorProfile.id) return;
     }
 
+    // Clinic staff (manager/receptionist) can update status for appointments at their clinic
+    if (requesterRole === UserRole.CLINIC_MANAGER || requesterRole === UserRole.RECEPTIONIST || requesterRole === UserRole.CLINIC_OWNER) {
+      const clinicId = await this.resolveStaffClinicId(requesterId);
+      if (clinicId && appt.clinicId === clinicId) return;
+    }
+
     // Pet owners can cancel their own appointment
     if (appt.ownerId === requesterId && newStatus === AppointmentStatus.CANCELLED) return;
 
     throw new ForbiddenException('You do not have permission to update this appointment status');
   }
 
+  private async resolveStaffClinicId(userId: string): Promise<string | null> {
+    const owned = await this.clinicRepository.findByCreatedBy(userId);
+    if (owned) return owned.id;
+    const staff = await this.prisma.clinicStaff.findUnique({
+      where: { userId },
+      select: { clinicId: true },
+    });
+    return staff?.clinicId ?? null;
+  }
+
   private emitEvent(event: AppointmentEvent, appt: AppointmentDetail): void {
     const payload: AppointmentEventPayload = {
       appointmentId: appt.id,
       appointmentNumber: appt.appointmentNumber,
-      ownerId: appt.ownerId,
+      ownerId: appt.ownerId ?? '',
       doctorId: appt.doctorId,
       clinicId: appt.clinicId,
-      petId: appt.petId,
+      petId: appt.petId ?? '',
       status: appt.status,
       appointmentDate: appt.appointmentDate,
       startTime: appt.startTime,
@@ -497,6 +684,11 @@ export class AppointmentsService {
       const dayStart = new Date(Date.UTC(y, m - 1, d));
       const dayEnd = new Date(dayStart.getTime() + 86_400_000);
       where['appointmentDate'] = { gte: dayStart, lt: dayEnd };
+    } else if (query.from || query.to) {
+      const range: Record<string, Date> = {};
+      if (query.from) { const [y, m, d] = query.from.split('-').map(Number); range['gte'] = new Date(Date.UTC(y, m - 1, d)); }
+      if (query.to)   { const [y, m, d] = query.to.split('-').map(Number);   range['lte'] = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999)); }
+      where['appointmentDate'] = range;
     } else if (query.upcoming) {
       where['appointmentDate'] = { gte: new Date() };
       where['status'] = { notIn: TERMINAL_STATUSES };

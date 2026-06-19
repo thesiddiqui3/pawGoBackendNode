@@ -138,6 +138,7 @@ export class ClinicRepository {
         AND longitude IS NOT NULL
         AND deleted_at IS NULL
         AND is_active = true
+        AND is_verified = true
       HAVING distance_km <= ${radius}
       ORDER BY distance_km ASC
       LIMIT ${limit}
@@ -145,32 +146,89 @@ export class ClinicRepository {
   }
 
   async update(id: string, dto: UpdateClinicDto, updatedBy: string): Promise<Clinic> {
-    const { workingHours, ...rest } = dto;
+    const { workingHours: rawWh, lunchBreak, clinicHolidays, blockedDates, ...rest } = dto as any;
+
+    const normalizedWh = this.normalizeWorkingHours(rawWh);
+
+    // Flatten nested lunchBreak object: { enabled, from, to } → flat DB columns
+    const lunchBreakFields = lunchBreak && typeof lunchBreak === 'object' ? {
+      lunchBreakEnabled: lunchBreak.enabled ?? false,
+      lunchBreakFrom: lunchBreak.from ?? null,
+      lunchBreakTo: lunchBreak.to ?? null,
+    } : {};
+
+    // Explicitly cast JSON fields so class-transformer mangling doesn't lose inner properties
+    const jsonFields: Record<string, unknown> = {};
+    if (clinicHolidays !== undefined) {
+      jsonFields.clinicHolidays = Array.isArray(clinicHolidays)
+        ? clinicHolidays.map((h: any) => ({
+            id:        String(h.id   ?? ''),
+            name:      String(h.name ?? ''),
+            date:      String(h.date ?? ''),
+            recurring: Boolean(h.recurring ?? false),
+          })).filter((h: any) => h.name && h.date)
+        : [];
+    }
+    if (blockedDates !== undefined) {
+      jsonFields.blockedDates = Array.isArray(blockedDates)
+        ? blockedDates.map((d: any) => String(d)).filter((d: string) => d)
+        : [];
+    }
+    if ((dto as any).lunchBreakBlocking !== undefined) {
+      jsonFields.lunchBreakBlocking = Boolean((dto as any).lunchBreakBlocking);
+    }
 
     return this.prisma.clinic.update({
       where: { id },
       data: {
         ...rest,
+        ...lunchBreakFields,
+        ...jsonFields,
         updatedBy,
-        ...(workingHours !== undefined && {
+        ...(normalizedWh !== undefined && {
           workingHours: {
             deleteMany: {},
-            create: workingHours.map((wh) => ({
-              day: wh.day,
-              startTime: wh.startTime,
-              endTime: wh.endTime,
-              isAvailable: wh.isAvailable ?? true,
-            })),
+            create: normalizedWh,
           },
         }),
       },
     });
   }
 
+  private normalizeWorkingHours(raw: any): Array<{ day: string; startTime: string; endTime: string; isAvailable: boolean }> | undefined {
+    if (raw === undefined || raw === null) return undefined;
+
+    let items: any[];
+    if (Array.isArray(raw)) {
+      items = raw;
+    } else if (typeof raw === 'object') {
+      // Object format: { monday: { open, from, to }, ... }
+      items = Object.entries(raw)
+        .filter(([, v]) => v && typeof v === 'object')
+        .map(([day, v]: [string, any]) => ({
+          day: day.toUpperCase(),
+          startTime: v.startTime ?? v.from,
+          endTime: v.endTime ?? v.to,
+          isAvailable: v.isAvailable ?? v.open ?? true,
+        }));
+    } else {
+      return undefined;
+    }
+
+    return items
+      .filter((wh) => wh.day && wh.startTime && wh.endTime)
+      .map((wh) => ({
+        day: (wh.day ?? '').toUpperCase(),
+        startTime: wh.startTime ?? wh.from,
+        endTime: wh.endTime ?? wh.to,
+        isAvailable: wh.isAvailable ?? wh.open ?? true,
+      }));
+  }
+
   async verify(id: string, updatedBy: string): Promise<Clinic> {
     return this.prisma.clinic.update({
       where: { id },
-      data: { isVerified: true, updatedBy },
+      data: { isVerified: true, isActive: true, updatedBy },
     });
   }
 
@@ -211,6 +269,36 @@ export class ClinicRepository {
 
   async existsByCreatedBy(userId: string): Promise<boolean> {
     return (await this.prisma.clinic.count({ where: { createdBy: userId, deletedAt: null } })) > 0;
+  }
+
+  // ─── Gallery ──────────────────────────────────────────────────────────────
+
+  async addGalleryPhoto(
+    clinicId: string,
+    imageUrl: string,
+    publicId: string,
+    uploadedBy: string,
+    caption?: string,
+    category?: string,
+  ) {
+    return this.prisma.clinicGallery.create({
+      data: { clinicId, imageUrl, publicId, uploadedBy, caption, category },
+    });
+  }
+
+  async getGallery(clinicId: string) {
+    return this.prisma.clinicGallery.findMany({
+      where: { clinicId },
+      orderBy: { uploadedAt: 'desc' },
+    });
+  }
+
+  async findGalleryPhoto(photoId: string) {
+    return this.prisma.clinicGallery.findUnique({ where: { id: photoId } });
+  }
+
+  async deleteGalleryPhoto(photoId: string) {
+    return this.prisma.clinicGallery.delete({ where: { id: photoId } });
   }
 
   // suspend / activate (toggle isActive without touching deletedAt)
