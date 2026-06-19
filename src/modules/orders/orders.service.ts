@@ -9,6 +9,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Order, OrderStatus } from '@prisma/client';
 import { PaginatedResponseDto } from '../../common/dto/api-response.dto';
 import { OrderEvent, OrderEventPayload } from '../../common/events/order.events';
+import { DeliveryEvent, DeliveryAssignmentEventPayload } from '../../common/events/delivery.events';
 import { UserRole } from '../../common/enums';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
@@ -198,7 +199,20 @@ export class OrdersService {
   async assignDeliveryPartner(id: string, partnerId: string, requesterId: string): Promise<Order> {
     const order = await this.orderRepository.findById(id);
     if (!order) throw new NotFoundException('Order not found');
-    return this.orderRepository.assignPartner(id, partnerId, requesterId);
+    const updated = await this.orderRepository.assignPartner(id, partnerId, requesterId);
+    // Emit ASSIGNED event so the delivery partner gets a real-time popup
+    const assignment = (updated as any).deliveryAssignment;
+    if (assignment) {
+      const payload: DeliveryAssignmentEventPayload = {
+        assignmentId: assignment.id,
+        orderId: id,
+        deliveryPartnerId: partnerId,
+        status: 'ASSIGNED',
+      };
+      this.eventEmitter.emit(DeliveryEvent.ASSIGNED, payload);
+      this.logger.log(`[assignDeliveryPartner] emitted DeliveryEvent.ASSIGNED for assignment ${assignment.id}`);
+    }
+    return updated;
   }
 
   // ─── Tracking timeline ────────────────────────────────────────────────────

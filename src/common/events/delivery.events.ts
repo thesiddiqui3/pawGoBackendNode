@@ -5,6 +5,7 @@ export enum DeliveryEvent {
   STARTED = 'delivery.started',
   COMPLETED = 'delivery.completed',
   FAILED = 'delivery.failed',
+  REJECTED = 'delivery.rejected',
   PARTNER_ONLINE = 'partner.online',
   PARTNER_OFFLINE = 'partner.offline',
   LOCATION_UPDATED = 'location.updated',

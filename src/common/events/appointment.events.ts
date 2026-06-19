@@ -6,6 +6,7 @@ export enum AppointmentEvent {
   NO_SHOW = 'appointment.no_show',
   RESCHEDULED = 'appointment.rescheduled',
   STATUS_CHANGED = 'appointment.status_changed',
+  DECLINED = 'appointment.declined',
 }
 
 export interface AppointmentEventPayload {

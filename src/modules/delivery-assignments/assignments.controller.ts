@@ -59,6 +59,12 @@ export class AssignmentsController {
   ) {
     return this.service.markFailed(id, user.sub, dto);
   }
+
+  @Patch(':id/reject')
+  @Roles(UserRole.DELIVERY_PARTNER)
+  reject(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.rejectByPartner(id, user.sub);
+  }
 }
 
 // ─── Admin assignment endpoints ───────────────────────────────────────────────

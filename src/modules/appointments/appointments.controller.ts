@@ -194,6 +194,20 @@ export class AppointmentsController {
     return ApiResponseDto.success(appt, 'Appointment cancelled');
   }
 
+  // PATCH /appointments/:id/decline — assistant declines a pending booking
+  @Patch(':id/decline')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ASSISTANT, UserRole.RECEPTIONIST, UserRole.CLINIC_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Decline a pending appointment (assistant/staff) — notifies clinic owner to reassign' })
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async decline(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ApiResponseDto<object>> {
+    const appt = await this.appointmentsService.declineByStaff(id, user.sub);
+    return ApiResponseDto.success(appt, 'Appointment declined');
+  }
+
   // PATCH /appointments/:id/confirm — convenience alias
   @Patch(':id/confirm')
   @HttpCode(HttpStatus.OK)

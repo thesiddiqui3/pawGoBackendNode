@@ -453,6 +453,22 @@ export class AppointmentsService {
     return updated;
   }
 
+  async declineByStaff(id: string, staffUserId: string): Promise<AppointmentDetail> {
+    const appt = await this.appointmentRepository.findRaw(id);
+    if (!appt) throw new NotFoundException('Appointment not found');
+    if (TERMINAL_STATUSES.includes(appt.status as AppointmentStatus)) {
+      throw new BadRequestException(`Cannot decline an appointment with status ${appt.status}`);
+    }
+    const updated = await this.appointmentRepository.update(id, {
+      status: AppointmentStatus.CANCELLED,
+      cancellationReason: 'Declined by clinic staff',
+      updatedBy: staffUserId,
+    });
+    this.logger.log(`Appointment ${id} declined by staff ${staffUserId}`);
+    this.emitEvent(AppointmentEvent.DECLINED, updated);
+    return updated;
+  }
+
   // ─── Assign doctor / assistant ────────────────────────────────────────────
 
   async assignDoctor(

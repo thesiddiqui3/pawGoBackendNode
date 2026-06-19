@@ -6,6 +6,7 @@ import { OrderEvent, OrderEventPayload } from '../../common/events/order.events'
 import { DeliveryEvent, DeliveryAssignmentEventPayload } from '../../common/events/delivery.events';
 import { PrismaService } from '../../database/prisma.service';
 import { NotificationsService } from './notifications.service';
+import { NotificationGateway } from './notification.gateway';
 
 @Injectable()
 export class NotificationEventListener {
@@ -14,6 +15,7 @@ export class NotificationEventListener {
   constructor(
     private readonly notifService: NotificationsService,
     private readonly prisma: PrismaService,
+    private readonly gateway: NotificationGateway,
   ) {}
 
   // ─── Appointment events ───────────────────────────────────────────────────
@@ -149,8 +151,20 @@ export class NotificationEventListener {
 
   @OnEvent(DeliveryEvent.ASSIGNED)
   async onDeliveryAssigned(payload: DeliveryAssignmentEventPayload) {
+    this.logger.log(`[ASSIGNED] event received: assignmentId=${payload.assignmentId} orderId=${payload.orderId} partnerId=${payload.deliveryPartnerId}`);
     await this.safe('delivery.assigned', async () => {
-      const order = await this.prisma.order.findUnique({ where: { id: payload.orderId }, select: { customerId: true, orderNumber: true } });
+      const order = await this.prisma.order.findUnique({
+        where: { id: payload.orderId },
+        select: {
+          customerId: true,
+          orderNumber: true,
+          totalAmount: true,
+          customer: { select: { firstName: true, lastName: true, phone: true } },
+          address: { select: { addressLine1: true, addressLine2: true, city: true } },
+          items: { take: 1, select: { product: { select: { name: true } } } },
+        },
+      });
+      this.logger.log(`[ASSIGNED] order found: ${order?.orderNumber ?? 'NULL'}`);
       if (order) {
         await this.notifService.notify({
           userId: order.customerId,
@@ -159,7 +173,62 @@ export class NotificationEventListener {
           type: NotificationType.DELIVERY_ASSIGNED,
           data: { assignmentId: payload.assignmentId, orderId: payload.orderId },
         });
+
+        const partner = await this.prisma.deliveryPartner.findUnique({
+          where: { id: payload.deliveryPartnerId },
+          select: { userId: true },
+        });
+        this.logger.log(`[ASSIGNED] partner userId: ${partner?.userId ?? 'NULL'}`);
+        if (partner) {
+          const addrParts = [order.address?.addressLine1, order.address?.addressLine2, order.address?.city].filter(Boolean);
+          const socketPayload = {
+            assignmentId: payload.assignmentId,
+            orderId: payload.orderId,
+            orderNumber: order.orderNumber,
+            customerName: `${order.customer?.firstName ?? ''} ${order.customer?.lastName ?? ''}`.trim(),
+            customerPhone: order.customer?.phone ?? '',
+            productName: order.items[0]?.product?.name ?? 'Pet items',
+            deliveryAddress: addrParts.join(', '),
+            totalAmount: order.totalAmount,
+          };
+          this.logger.log(`[ASSIGNED] emitting delivery:new_assignment to user:${partner.userId}`);
+          this.gateway.sendToUser(partner.userId, 'delivery:new_assignment', socketPayload);
+        }
       }
+    });
+  }
+
+  @OnEvent(DeliveryEvent.REJECTED)
+  async onDeliveryRejected(payload: DeliveryAssignmentEventPayload) {
+    this.logger.log(`[REJECTED] assignmentId=${payload.assignmentId} orderId=${payload.orderId}`);
+    await this.safe('delivery.rejected', async () => {
+      const order = await this.prisma.order.findUnique({
+        where: { id: payload.orderId },
+        select: {
+          orderNumber: true,
+          shop: { select: { ownerId: true } },
+          items: { take: 1, select: { product: { select: { name: true } } } },
+        },
+      });
+      if (!order?.shop?.ownerId) {
+        this.logger.warn(`[REJECTED] shop owner not found for order ${payload.orderId}`);
+        return;
+      }
+      const ownerId = order.shop.ownerId;
+      this.logger.log(`[REJECTED] emitting delivery:rejected to shop owner ${ownerId}`);
+      this.gateway.sendToUser(ownerId, 'delivery:rejected', {
+        assignmentId: payload.assignmentId,
+        orderId: payload.orderId,
+        orderNumber: order.orderNumber,
+        productName: order.items[0]?.product?.name ?? 'Pet items',
+      });
+      await this.notifService.notify({
+        userId: ownerId,
+        title: 'Delivery Rejected — Reassign Required',
+        message: `Order ${order.orderNumber} was rejected by the delivery partner. Please assign a new partner.`,
+        type: NotificationType.DELIVERY_ASSIGNED,
+        data: { orderId: payload.orderId, assignmentId: payload.assignmentId },
+      });
     });
   }
 
@@ -180,6 +249,47 @@ export class NotificationEventListener {
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  @OnEvent(AppointmentEvent.DECLINED)
+  async onAppointmentDeclined(payload: AppointmentEventPayload) {
+    await this.safe('appointment.declined', async () => {
+      const apt = await this.prisma.appointment.findUnique({
+        where: { id: payload.appointmentId },
+        include: {
+          doctor: { include: { user: { select: { firstName: true, lastName: true } } } },
+          pet: { select: { name: true, species: true } },
+        },
+      });
+      if (!apt) return;
+
+      // Clinic owner is stored in ClinicStaff with role CLINIC_OWNER
+      const ownerStaff = await this.prisma.clinicStaff.findFirst({
+        where: { clinicId: apt.clinicId, role: 'CLINIC_OWNER', isActive: true },
+        select: { userId: true },
+      });
+      if (!ownerStaff) return;
+      const ownerId = ownerStaff.userId;
+
+      const petLabel = apt.pet ? `${apt.pet.name} (${apt.pet.species})` : 'a pet';
+      const doctorName = apt.doctor?.user
+        ? `${apt.doctor.user.firstName} ${apt.doctor.user.lastName}`.trim()
+        : '';
+      this.gateway.sendToUser(ownerId, 'appointment:declined', {
+        appointmentId: apt.id,
+        appointmentNumber: apt.appointmentNumber,
+        petName: petLabel,
+        doctorName,
+        date: this.fmtDate(apt.appointmentDate),
+      });
+      await this.notifService.notify({
+        userId: ownerId,
+        title: 'Appointment Declined — Reassign Required',
+        message: `Appointment ${apt.appointmentNumber} for ${petLabel} on ${this.fmtDate(apt.appointmentDate)} was declined by staff. Please reassign.`,
+        type: NotificationType.BOOKING_CANCELLED,
+        data: { appointmentId: apt.id },
+      });
+    });
+  }
 
   private async getAppointment(appointmentId: string) {
     return this.prisma.appointment.findUnique({

@@ -134,6 +134,24 @@ export class AssignmentsService {
     });
   }
 
+  async rejectByPartner(id: string, userId: string) {
+    const assignment = await this.getAndAssertPartner(id, userId);
+    const updated = await this.assignmentRepository.updateStatus(
+      assignment.id,
+      DeliveryStatus.CANCELLED,
+      { cancelledAt: new Date(), failureReason: 'Rejected by delivery partner' } as any,
+    );
+    this.logger.log(`[reject] assignment ${id} rejected by partner ${userId}`);
+    const payload: DeliveryAssignmentEventPayload = {
+      assignmentId: assignment.id,
+      orderId: assignment.orderId,
+      deliveryPartnerId: assignment.deliveryPartnerId,
+      status: 'CANCELLED',
+    };
+    this.eventEmitter.emit(DeliveryEvent.REJECTED, payload);
+    return updated;
+  }
+
   // ─── Admin: find all assignments ──────────────────────────────────────────
 
   async findAll(query: AssignmentQueryDto) {
