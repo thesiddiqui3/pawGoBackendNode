@@ -62,13 +62,16 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
 import { UsersModule } from './modules/users/users.module';
 import { VaccinationsModule } from './modules/vaccinations/vaccinations.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { FieldAgentsModule } from './modules/field-agents/field-agents.module';
+import razorpayConfig from './config/razorpay.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [`.env.${process.env.NODE_ENV ?? 'development'}`, '.env'],
-      load: [appConfig, databaseConfig, jwtConfig, redisConfig, cloudinaryConfig, emailConfig],
+      load: [appConfig, databaseConfig, jwtConfig, redisConfig, cloudinaryConfig, emailConfig, razorpayConfig],
       cache: true,
     }),
 
@@ -137,6 +140,8 @@ import { CouponsModule } from './modules/coupons/coupons.module';
     ClinicReportsModule,
     PrescriptionsModule,
     CouponsModule,
+    PaymentsModule,
+    FieldAgentsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

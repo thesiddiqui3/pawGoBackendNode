@@ -143,13 +143,56 @@ export class ServicesService {
     return this.bookingRepo.findManyForClinic(clinicId, query);
   }
 
+  async shopBookings(ownerId: string, query: BookingQueryDto) {
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId } });
+    if (!shop) throw new NotFoundException('Shop not found');
+    return this.bookingRepo.findManyForShop(shop.id, query);
+  }
+
+  async shopConfirmBooking(id: string, ownerId: string) {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Booking not found');
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId } });
+    if (!shop || booking.service.shopId !== shop.id) throw new ForbiddenException('Access denied');
+    if (booking.status !== ServiceBookingStatus.PENDING) throw new BadRequestException(`Cannot confirm a ${booking.status} booking`);
+    return this.bookingRepo.updateStatus(id, { status: ServiceBookingStatus.CONFIRMED, confirmedAt: new Date() });
+  }
+
+  async shopStartBooking(id: string, ownerId: string) {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Booking not found');
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId } });
+    if (!shop || booking.service.shopId !== shop.id) throw new ForbiddenException('Access denied');
+    if (booking.status !== ServiceBookingStatus.CONFIRMED) throw new BadRequestException(`Cannot start a ${booking.status} booking`);
+    return this.bookingRepo.updateStatus(id, { status: ServiceBookingStatus.IN_PROGRESS });
+  }
+
+  async shopCompleteBooking(id: string, ownerId: string) {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Booking not found');
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId } });
+    if (!shop || booking.service.shopId !== shop.id) throw new ForbiddenException('Access denied');
+    if (booking.status !== ServiceBookingStatus.IN_PROGRESS) throw new BadRequestException(`Cannot complete a ${booking.status} booking`);
+    return this.bookingRepo.updateStatus(id, { status: ServiceBookingStatus.COMPLETED, completedAt: new Date() });
+  }
+
+  async shopCancelBooking(id: string, ownerId: string, reason?: string) {
+    const booking = await this.bookingRepo.findById(id);
+    if (!booking) throw new NotFoundException('Booking not found');
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId } });
+    if (!shop || booking.service.shopId !== shop.id) throw new ForbiddenException('Access denied');
+    const cancellable: ServiceBookingStatus[] = [ServiceBookingStatus.PENDING, ServiceBookingStatus.CONFIRMED];
+    if (!cancellable.includes(booking.status)) throw new BadRequestException(`Cannot cancel a ${booking.status} booking`);
+    return this.bookingRepo.updateStatus(id, { status: ServiceBookingStatus.CANCELLED, cancelledAt: new Date(), cancelReason: reason });
+  }
+
   async confirmBooking(id: string, ownerId: string, role: string) {
     const booking = await this.bookingRepo.findById(id);
     if (!booking) throw new NotFoundException('Booking not found');
 
     if (!this.isAdmin(role)) {
       const clinicId = await this.resolveClinicId(ownerId);
-      if (booking.service.clinic.id !== clinicId) throw new ForbiddenException('Access denied');
+      if (booking.service.clinic?.id !== clinicId) throw new ForbiddenException('Access denied');
     }
 
     if (booking.status !== ServiceBookingStatus.PENDING) {
@@ -165,7 +208,7 @@ export class ServicesService {
 
     if (!this.isAdmin(role)) {
       const clinicId = await this.resolveClinicId(ownerId);
-      if (booking.service.clinic.id !== clinicId) throw new ForbiddenException('Access denied');
+      if (booking.service.clinic?.id !== clinicId) throw new ForbiddenException('Access denied');
     }
 
     if (booking.status !== ServiceBookingStatus.CONFIRMED) {
@@ -181,7 +224,7 @@ export class ServicesService {
 
     if (!this.isAdmin(role)) {
       const clinicId = await this.resolveClinicId(ownerId);
-      if (booking.service.clinic.id !== clinicId) throw new ForbiddenException('Access denied');
+      if (booking.service.clinic?.id !== clinicId) throw new ForbiddenException('Access denied');
     }
 
     if (booking.status !== ServiceBookingStatus.IN_PROGRESS) {
@@ -215,7 +258,7 @@ export class ServicesService {
 
     if (!this.isAdmin(role)) {
       const clinicId = await this.resolveClinicId(ownerId);
-      if (booking.service.clinic.id !== clinicId) throw new ForbiddenException('Access denied');
+      if (booking.service.clinic?.id !== clinicId) throw new ForbiddenException('Access denied');
     }
 
     if (booking.status !== ServiceBookingStatus.CONFIRMED) {

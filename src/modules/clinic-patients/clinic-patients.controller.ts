@@ -33,13 +33,15 @@ export class ClinicPatientsController {
   @ApiQuery({ name: 'clinicId', required: false })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, description: 'Filter by owner name or phone' })
   async listOwners(
     @CurrentUser() user: JwtPayload,
     @Query('clinicId') clinicId?: string,
     @Query('page') page = 1,
     @Query('limit') limit = 20,
+    @Query('search') search?: string,
   ): Promise<ApiResponseDto<object>> {
-    const data = await this.service.listOwners(user.sub, user.role, clinicId, +page, +limit);
+    const data = await this.service.listOwners(user.sub, user.role, clinicId, +page, +limit, search);
     return ApiResponseDto.success(data);
   }
 

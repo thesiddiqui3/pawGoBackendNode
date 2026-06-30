@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Order, OrderStatus } from '@prisma/client';
+import { CouponType, Order, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { OrderEvent, OrderEventPayload } from '../../common/events/order.events';
 import { AddressRepository } from '../addresses/address.repository';
@@ -54,7 +54,7 @@ export class CheckoutService {
       throw new BadRequestException('Cart is empty');
     }
 
-    // 3. Refresh prices and validate stock for all items
+    // 3. Refresh prices and validate stock
     const enrichedItems: Array<{
       productId: string;
       productName: string;
@@ -106,11 +106,43 @@ export class CheckoutService {
       bucket.subtotal += item.subtotal;
     }
 
-    // 5. Create orders + deduct stock in a single transaction
+    // 5. Validate coupon if provided (once, applied to the first matching shop bucket)
+    let couponRecord: Awaited<ReturnType<typeof this.prisma.coupon.findFirst>> | null = null;
+    let couponShopId: string | null = null;
+
+    if (dto.couponCode) {
+      const now = new Date();
+      couponRecord = await this.prisma.coupon.findFirst({
+        where: {
+          code: dto.couponCode.toUpperCase(),
+          status: 'ACTIVE',
+          startDate: { lte: now },
+          expiryDate: { gt: now },
+          shopId: { in: [...shopBuckets.keys()] },
+        },
+      });
+
+      if (!couponRecord) {
+        throw new BadRequestException(`Coupon "${dto.couponCode}" is invalid, expired, or not applicable to items in your cart.`);
+      }
+      if (couponRecord.usedCount >= couponRecord.usageLimit) {
+        throw new BadRequestException(`Coupon "${dto.couponCode}" has reached its usage limit.`);
+      }
+
+      const bucketForCoupon = shopBuckets.get(couponRecord.shopId)!;
+      if (bucketForCoupon.subtotal < couponRecord.minOrderAmount) {
+        throw new BadRequestException(
+          `Minimum order amount of ₹${couponRecord.minOrderAmount} required to use this coupon.`,
+        );
+      }
+      couponShopId = couponRecord.shopId;
+    }
+
+    // 6. Create orders + deduct stock in a single transaction
     const createdOrders: Order[] = [];
 
     await this.prisma.$transaction(async (tx) => {
-      // Deduct stock for all products atomically
+      // Deduct stock atomically
       for (const item of enrichedItems) {
         await tx.product.update({
           where: { id: item.productId },
@@ -121,10 +153,22 @@ export class CheckoutService {
       // Create one order per shop
       for (const [, bucket] of shopBuckets) {
         const orderNumber = await this.orderRepository.generateOrderNumber();
-        const shipping = 0; // flat shipping — can be extended
+        const shipping = 0;
         const tax = 0;
-        const discount = 0;
-        const totalAmount = bucket.subtotal + shipping + tax - discount;
+
+        // Calculate discount for this shop's bucket
+        let discount = 0;
+        if (couponRecord && couponShopId === bucket.shopId) {
+          if (couponRecord.type === CouponType.FLAT) {
+            discount = Math.min(couponRecord.value, bucket.subtotal);
+          } else if (couponRecord.type === CouponType.PERCENTAGE) {
+            discount = Math.round((bucket.subtotal * couponRecord.value) / 100 * 100) / 100;
+          } else if (couponRecord.type === CouponType.FREE_DELIVERY) {
+            discount = 0; // shipping is already 0; extend this when shipping is non-zero
+          }
+        }
+
+        const totalAmount = Math.max(0, bucket.subtotal + shipping + tax - discount);
 
         const order = await tx.order.create({
           data: {
@@ -164,11 +208,19 @@ export class CheckoutService {
         createdOrders.push(order as unknown as Order);
       }
 
+      // Increment coupon usage count
+      if (couponRecord) {
+        await tx.coupon.update({
+          where: { id: couponRecord.id },
+          data: { usedCount: { increment: 1 } },
+        });
+      }
+
       // Clear the cart
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
     });
 
-    // 6. Emit events outside the transaction
+    // 7. Emit events outside the transaction
     for (const order of createdOrders) {
       this.emitOrderEvent(OrderEvent.CREATED, order);
       this.logger.log(`Order created: ${order.orderNumber} for shop ${order.shopId}`);

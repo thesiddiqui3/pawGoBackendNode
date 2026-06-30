@@ -38,6 +38,25 @@ export class HomeVisitsController {
     return ApiResponseDto.success(data);
   }
 
+  @Get('admin')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'All home visits across all clinics (admin)' })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'clinicId', required: false })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async findAll(
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('clinicId') clinicId?: string,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+  ): Promise<ApiResponseDto<object>> {
+    const data = await this.homeVisitsService.findAll(status, search, clinicId, +page, +limit);
+    return ApiResponseDto.success(data);
+  }
+
   @Get('clinic')
   @Roles(UserRole.CLINIC_OWNER, UserRole.CLINIC_MANAGER, UserRole.RECEPTIONIST, UserRole.ASSISTANT, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'All home visit requests for my clinic' })

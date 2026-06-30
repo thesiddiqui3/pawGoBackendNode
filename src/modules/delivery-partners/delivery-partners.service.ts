@@ -8,6 +8,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DeliveryEvent } from '../../common/events/delivery.events';
 import { UserRole } from '../../common/enums';
+import { PrismaService } from '../../database/prisma.service';
 import { DeliveryPartnerRepository } from './delivery-partner.repository';
 import { DeliveryPartnerQueryDto } from './dto/delivery-partner-query.dto';
 import { RegisterDeliveryPartnerDto } from './dto/register-delivery-partner.dto';
@@ -21,6 +22,7 @@ export class DeliveryPartnersService {
   constructor(
     private readonly partnerRepository: DeliveryPartnerRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─── Registration ─────────────────────────────────────────────────────────
@@ -127,11 +129,14 @@ export class DeliveryPartnersService {
   async approve(id: string, adminId: string) {
     const partner = await this.partnerRepository.findById(id);
     if (!partner) throw new NotFoundException('Delivery partner not found');
-    return this.partnerRepository.update(id, {
+    const updated = await this.partnerRepository.update(id, {
       isApproved: true,
       approvedAt: new Date(),
       approvedBy: adminId,
     });
+    // Activate the user account so the delivery partner can now log in
+    await this.prisma.user.update({ where: { id: partner.userId }, data: { status: 'ACTIVE' } });
+    return updated;
   }
 
   async suspend(id: string, adminId: string, reason?: string) {

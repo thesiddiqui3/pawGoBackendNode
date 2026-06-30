@@ -89,6 +89,9 @@ class ProvisionClinicBodyDto {
 
   @ApiPropertyOptional({ example: 77.209 })
   @IsOptional() @Type(() => Number) @IsNumber() @IsLongitude() longitude?: number;
+
+  @ApiPropertyOptional({ description: 'Field agent ID who onboarded this clinic' })
+  @IsOptional() @IsString() onboardedByAgentId?: string;
 }
 
 class ProvisionShopBodyDto {
@@ -130,6 +133,9 @@ class ProvisionShopBodyDto {
 
   @ApiPropertyOptional({ example: 77.209 })
   @IsOptional() @Type(() => Number) @IsNumber() @IsLongitude() longitude?: number;
+
+  @ApiPropertyOptional({ description: 'Field agent ID who onboarded this shop' })
+  @IsOptional() @IsString() onboardedByAgentId?: string;
 }
 
 class AdminShopQueryDto extends PaginationDto {

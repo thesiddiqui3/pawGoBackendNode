@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -30,6 +31,8 @@ import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 import { UpdateAppointmentStatusDto } from './dto/update-appointment-status.dto';
 import { WalkInAppointmentDto } from './dto/walk-in-appointment.dto';
+import { EMAIL_SERVICE, IEmailService } from '../../shared/email/email.interface';
+import { emailTemplates } from '../../shared/email/email-templates';
 
 // Map JS Date.getDay() (0=Sunday) to DayOfWeek enum strings
 const JS_DAY_TO_ENUM = [
@@ -53,6 +56,7 @@ export class AppointmentsService {
     private readonly doctorRepository: DoctorRepository,
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(EMAIL_SERVICE) private readonly emailService: IEmailService,
   ) {}
 
   // ─── Book appointment ──────────────────────────────────────────────────────
@@ -137,7 +141,48 @@ export class AppointmentsService {
 
     this.logger.log(`Appointment created: ${appointment.appointmentNumber}`);
     this.emitEvent(AppointmentEvent.CREATED, appointment);
+
+    // Send confirmation email (fire-and-forget — never blocks the response)
+    this.sendConfirmationEmail(appointment).catch(err =>
+      this.logger.error(`Failed to send appointment confirmation email: ${err.message}`),
+    );
+
     return appointment;
+  }
+
+  private async sendConfirmationEmail(appt: AppointmentDetail): Promise<void> {
+    const owner = appt.owner as { firstName?: string; lastName?: string; email?: string } | undefined;
+    if (!owner?.email) return;
+
+    const pet = appt.pet as { name?: string } | undefined;
+    const clinic = appt.clinic as { name?: string; address?: string; city?: string } | undefined;
+    const doctor = appt.doctor as { user?: { firstName?: string; lastName?: string } } | undefined;
+
+    const ownerName = [owner.firstName, owner.lastName].filter(Boolean).join(' ') || 'Pet Owner';
+    const doctorName = doctor?.user
+      ? `Dr. ${[doctor.user.firstName, doctor.user.lastName].filter(Boolean).join(' ')}`
+      : 'Assigned Doctor';
+    const clinicAddress = [clinic?.address, clinic?.city].filter(Boolean).join(', ') || '';
+
+    const date = new Date(appt.appointmentDate).toLocaleDateString('en-IN', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+
+    await this.emailService.send({
+      to: owner.email,
+      subject: `Appointment Confirmed — ${appt.appointmentNumber}`,
+      html: emailTemplates.appointmentConfirmation(
+        ownerName,
+        appt.appointmentNumber,
+        pet?.name ?? 'your pet',
+        doctorName,
+        clinic?.name ?? '',
+        clinicAddress,
+        date,
+        appt.startTime,
+        appt.reason ?? 'General checkup',
+      ),
+    });
   }
 
   // ─── Walk-in appointment (reception creates for any visitor) ─────────────
@@ -694,6 +739,7 @@ export class AppointmentsService {
     if (query.petId) where['petId'] = query.petId;
     if (query.status) where['status'] = query.status;
     if (query.appointmentNumber) where['appointmentNumber'] = query.appointmentNumber;
+    if (query.isWalkIn === true) where['isWalkIn'] = true;
 
     if (query.date) {
       const [y, m, d] = query.date.split('-').map(Number);

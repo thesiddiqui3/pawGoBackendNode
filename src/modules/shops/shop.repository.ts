@@ -134,4 +134,11 @@ export class ShopRepository {
   async existsByOwner(ownerId: string): Promise<boolean> {
     return (await this.prisma.shop.count({ where: { ownerId, deletedAt: null } })) > 0;
   }
+
+  async updateRating(id: string, rating: number, totalReviews: number): Promise<void> {
+    await this.prisma.shop.update({
+      where: { id },
+      data: { rating, totalReviews },
+    });
+  }
 }

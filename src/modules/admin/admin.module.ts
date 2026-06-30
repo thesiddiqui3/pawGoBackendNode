@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { NotificationRepository } from '../notifications/notification.repository';
 import { OrderRepository } from '../orders/order.repository';
 import { ShopRepository } from '../shops/shop.repository';
@@ -15,13 +16,15 @@ import { DeliveryPartnersModule } from '../delivery-partners/delivery-partners.m
 import { ProductsModule } from '../products/products.module';
 import { VerificationDocsModule } from '../verification-docs/verification-docs.module';
 import { ServicesModule } from '../services/services.module';
+import { EmailModule } from '../../shared/email/email.module';
+import { FieldAgentsModule } from '../field-agents/field-agents.module';
 import { AdminController } from './admin.controller';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { AdminProvisionService } from './admin-provision.service';
 import { AdminUserService } from './admin-user.service';
 
 @Module({
-  imports: [ClinicsModule, ShopsModule, DeliveryPartnersModule, ProductsModule, VerificationDocsModule, ServicesModule],
+  imports: [ClinicsModule, ShopsModule, DeliveryPartnersModule, ProductsModule, VerificationDocsModule, ServicesModule, EmailModule, ConfigModule, FieldAgentsModule],
   controllers: [AdminController],
   providers: [
     AdminDashboardService,

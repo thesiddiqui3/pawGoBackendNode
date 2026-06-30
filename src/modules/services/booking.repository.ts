@@ -24,6 +24,8 @@ const BOOKING_SELECT = {
       duration: true,
       imageUrl: true,
       clinic: { select: { id: true, name: true, city: true } },
+      shop: { select: { id: true, name: true } },
+      shopId: true,
     },
   },
   pet: { select: { id: true, name: true, species: true, breed: true, photoUrl: true } },
@@ -46,6 +48,19 @@ export class BookingRepository {
     const { skip, take, page, pageSize } = getPaginationMeta(query);
     const where: Prisma.ServiceBookingWhereInput = {
       customerId,
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.serviceBooking.findMany({ where, select: BOOKING_SELECT, skip, take, orderBy: { scheduledAt: 'desc' } }),
+      this.prisma.serviceBooking.count({ where }),
+    ]);
+    return buildPaginatedResponse(items, total, page, pageSize);
+  }
+
+  async findManyForShop(shopId: string, query: BookingQueryDto) {
+    const { skip, take, page, pageSize } = getPaginationMeta(query);
+    const where: Prisma.ServiceBookingWhereInput = {
+      service: { shopId },
       ...(query.status ? { status: query.status } : {}),
     };
     const [items, total] = await this.prisma.$transaction([

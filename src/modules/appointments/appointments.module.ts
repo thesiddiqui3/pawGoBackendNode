@@ -3,6 +3,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicsModule } from '../clinics/clinics.module';
 import { DoctorsModule } from '../doctors/doctors.module';
 import { PetsModule } from '../pets/pets.module';
+import { EmailModule } from '../../shared/email/email.module';
 import { AppointmentRepository } from './appointment.repository';
 import {
   AppointmentsController,
@@ -12,7 +13,7 @@ import {
 import { AppointmentsService } from './appointments.service';
 
 @Module({
-  imports: [PetsModule, ClinicsModule, DoctorsModule, EventEmitterModule.forRoot()],
+  imports: [PetsModule, ClinicsModule, DoctorsModule, EmailModule, EventEmitterModule.forRoot()],
   controllers: [
     AppointmentsController,
     ClinicAppointmentsController,

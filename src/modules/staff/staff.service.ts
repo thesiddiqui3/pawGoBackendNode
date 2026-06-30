@@ -1,8 +1,11 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { UserRole } from '../../common/enums';
 import { CreateAssistantDto, CreateClinicStaffDto, CreateDeliveryPartnerDto } from './dto/create-staff.dto';
+import { EMAIL_SERVICE, IEmailService } from '../../shared/email/email.interface';
+import { emailTemplates } from '../../shared/email/email-templates';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -23,14 +26,41 @@ function generatePassword(): string {
 
 @Injectable()
 export class StaffService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(StaffService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+    @Inject(EMAIL_SERVICE) private readonly emailService: IEmailService,
+  ) {}
+
+  // ─── Email helper ─────────────────────────────────────────────────────────
+
+  private async sendStaffInviteEmail(
+    firstName: string,
+    email: string,
+    role: string,
+    temporaryPassword: string,
+    clinicName: string,
+  ) {
+    const portalUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:3001');
+    try {
+      await this.emailService.send({
+        to: email,
+        subject: `You've been invited to PawGo — ${clinicName}`,
+        html: emailTemplates.staffInvite(firstName, clinicName, role, email, temporaryPassword, portalUrl),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send staff invite email to ${email}`, err);
+    }
+  }
 
   // ─── CLINIC_OWNER creates ASSISTANT ──────────────────────────────────────
 
   async createAssistant(clinicOwnerId: string, dto: CreateAssistantDto) {
     const clinic = await this.prisma.clinic.findFirst({
       where: { createdBy: clinicOwnerId, deletedAt: null },
-      select: { id: true, isVerified: true },
+      select: { id: true, name: true, isVerified: true },
     });
     if (!clinic) throw new NotFoundException('Clinic not found');
     if (!clinic.isVerified) throw new ForbiddenException('Your clinic must be verified before adding staff');
@@ -49,6 +79,7 @@ export class StaffService {
         phone: dto.phone,
         passwordHash,
         role: UserRole.ASSISTANT,
+        status: 'PENDING_VERIFICATION',
         isEmailVerified: true,
         mustChangePassword: true,
         doctorProfile: {
@@ -56,11 +87,12 @@ export class StaffService {
         },
       },
       select: {
-        id: true, firstName: true, lastName: true, email: true, role: true, createdAt: true,
+        id: true, firstName: true, lastName: true, email: true, role: true, status: true, createdAt: true,
         doctorProfile: { select: { id: true, clinicId: true } },
       },
     });
 
+    await this.sendStaffInviteEmail(dto.firstName, dto.email, UserRole.ASSISTANT, temporaryPassword, clinic.name);
     return { credentials: { email: dto.email, temporaryPassword }, user };
   }
 
@@ -69,7 +101,7 @@ export class StaffService {
   async createClinicStaff(clinicOwnerId: string, dto: CreateClinicStaffDto) {
     const clinic = await this.prisma.clinic.findFirst({
       where: { createdBy: clinicOwnerId, deletedAt: null },
-      select: { id: true, isVerified: true },
+      select: { id: true, name: true, isVerified: true },
     });
     if (!clinic) throw new NotFoundException('Clinic not found');
     if (!clinic.isVerified) throw new ForbiddenException('Your clinic must be verified before adding staff');
@@ -80,6 +112,8 @@ export class StaffService {
     const temporaryPassword = generatePassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, BCRYPT_ROUNDS);
 
+    const needsAdminApproval = dto.role === UserRole.ASSISTANT;
+
     const user = await this.prisma.user.create({
       data: {
         firstName: dto.firstName,
@@ -88,9 +122,10 @@ export class StaffService {
         phone: dto.phone,
         passwordHash,
         role: dto.role,
+        status: needsAdminApproval ? 'PENDING_VERIFICATION' : 'ACTIVE',
         isEmailVerified: true,
         mustChangePassword: true,
-        ...(dto.role === UserRole.ASSISTANT && {
+        ...(needsAdminApproval && {
           doctorProfile: { create: { clinicId: clinic.id } },
         }),
         clinicStaff: {
@@ -98,11 +133,12 @@ export class StaffService {
         },
       },
       select: {
-        id: true, firstName: true, lastName: true, email: true, role: true, createdAt: true,
+        id: true, firstName: true, lastName: true, email: true, role: true, status: true, createdAt: true,
         clinicStaff: { select: { id: true, clinicId: true, role: true } },
       },
     });
 
+    await this.sendStaffInviteEmail(dto.firstName, dto.email, dto.role, temporaryPassword, clinic.name);
     return { credentials: { email: dto.email, temporaryPassword }, user };
   }
 
@@ -187,7 +223,7 @@ export class StaffService {
   async createDeliveryPartner(shopOwnerId: string, dto: CreateDeliveryPartnerDto) {
     const shop = await this.prisma.shop.findUnique({
       where: { ownerId: shopOwnerId },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (!shop) throw new NotFoundException('Shop not found');
 
@@ -207,6 +243,7 @@ export class StaffService {
         phone: dto.phone,
         passwordHash,
         role: UserRole.DELIVERY_PARTNER,
+        status: 'PENDING_VERIFICATION',
         isEmailVerified: true,
         mustChangePassword: true,
         deliveryPartner: {
@@ -229,6 +266,14 @@ export class StaffService {
         user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, status: true } },
       },
     });
+
+    this.emailService
+      .send({
+        to: dto.email,
+        subject: `Welcome to PawGo Delivery — Your Account Credentials`,
+        html: emailTemplates.deliveryPartnerInvite(dto.firstName, shop.name, dto.email, temporaryPassword),
+      })
+      .catch((err: Error) => this.logger.error(`Failed to send delivery partner invite email to ${dto.email}: ${err?.message}`));
 
     return { credentials: { email: dto.email, temporaryPassword }, user: partner };
   }

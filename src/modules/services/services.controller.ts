@@ -149,6 +149,54 @@ export class BookingsController {
     return ApiResponseDto.success(result);
   }
 
+  @Get('shop')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SHOP_OWNER)
+  @ApiOperation({ summary: 'List service bookings for my shop (shop owner)' })
+  async shopBookings(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: BookingQueryDto,
+  ): Promise<ApiResponseDto<object>> {
+    const result = await this.svc.shopBookings(user.sub, query);
+    return ApiResponseDto.success(result);
+  }
+
+  @Patch('shop/:id/confirm')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SHOP_OWNER)
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async shopConfirm(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.svc.shopConfirmBooking(id, user.sub), 'Booking confirmed');
+  }
+
+  @Patch('shop/:id/start')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SHOP_OWNER)
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async shopStart(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.svc.shopStartBooking(id, user.sub), 'Service started');
+  }
+
+  @Patch('shop/:id/complete')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SHOP_OWNER)
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async shopComplete(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.svc.shopCompleteBooking(id, user.sub), 'Booking completed');
+  }
+
+  @Patch('shop/:id/cancel')
+  @ApiBearerAuth('access-token')
+  @Roles(UserRole.SHOP_OWNER)
+  @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
+  async shopCancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body('reason') reason?: string,
+  ): Promise<ApiResponseDto<object>> {
+    return ApiResponseDto.success(await this.svc.shopCancelBooking(id, user.sub, reason), 'Booking cancelled');
+  }
+
   @Get(':id')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get booking detail' })

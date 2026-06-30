@@ -89,6 +89,10 @@ export class AuthService {
       throw new UnauthorizedException('Account has been suspended');
     }
 
+    if (!user.isEmailVerified) {
+      throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
+    }
+
     const tokens = await this.generateAndStoreTokens(
       { sub: user.id, email: user.email, role: user.role },
       userAgent,

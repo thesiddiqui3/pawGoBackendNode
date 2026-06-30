@@ -67,34 +67,47 @@ export class ClinicPatientsService {
 
   // ─── List pet owners who visited ─────────────────────────────────────────
 
-  async listOwners(userId: string, role: string, clinicId?: string, page = 1, limit = 20) {
+  async listOwners(userId: string, role: string, clinicId?: string, page = 1, limit = 20, search?: string) {
     const cid = clinicId ?? await this.resolveClinicId(userId, role);
     const skip = (page - 1) * limit;
 
-    const owners = await this.prisma.user.findMany({
-      where: {
-        deletedAt: null,
-        pets: {
-          some: {
-            appointments: { some: { clinicId: cid } },
-          },
-        },
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        avatarUrl: true,
-        _count: { select: { pets: true } },
-      },
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-    });
+    const searchFilter = search?.trim()
+      ? {
+          OR: [
+            { firstName: { contains: search.trim(), mode: 'insensitive' as const } },
+            { lastName: { contains: search.trim(), mode: 'insensitive' as const } },
+            { phone: { contains: search.trim() } },
+            { email: { contains: search.trim(), mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
 
-    return { data: owners, page, limit };
+    const clinicFilter = {
+      pets: { some: { appointments: { some: { clinicId: cid } } } },
+    };
+
+    const where = { deletedAt: null, ...clinicFilter, ...searchFilter };
+
+    const [owners, total] = await this.prisma.$transaction([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+          _count: { select: { pets: true } },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return { data: owners, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   // ─── Get pet profile ──────────────────────────────────────────────────────

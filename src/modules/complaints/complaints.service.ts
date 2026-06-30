@@ -1,5 +1,6 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ComplaintStatus } from '@prisma/client';
+import { PrismaService } from '../../database/prisma.service';
 import { UserRole } from '../../common/enums';
 import { ComplaintRepository } from './complaint.repository';
 import { AssignComplaintDto, UpdateComplaintStatusDto } from './dto/update-complaint-status.dto';
@@ -8,16 +9,54 @@ import { CreateComplaintDto } from './dto/create-complaint.dto';
 
 @Injectable()
 export class ComplaintsService {
-  constructor(private readonly repo: ComplaintRepository) {}
+  private readonly logger = new Logger(ComplaintsService.name);
+
+  constructor(
+    private readonly repo: ComplaintRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async create(dto: CreateComplaintDto, userId: string) {
-    return this.repo.create({
+    const complaint = await this.repo.create({
       user: { connect: { id: userId } },
       category: dto.category,
       subject: dto.subject,
       description: dto.description,
       orderId: dto.orderId,
       appointmentId: dto.appointmentId,
+    });
+
+    // Auto-assign to the admin with fewest open complaints (fire-and-forget)
+    this.autoAssign(complaint.id).catch((err: Error) =>
+      this.logger.warn(`Auto-assign failed for complaint ${complaint.id}: ${err?.message}`),
+    );
+
+    return complaint;
+  }
+
+  private async autoAssign(complaintId: string): Promise<void> {
+    const admins = await this.prisma.user.findMany({
+      where: { role: UserRole.SUPER_ADMIN, deletedAt: null },
+      select: { id: true },
+    });
+    if (admins.length === 0) return;
+
+    const counts = await Promise.all(
+      admins.map(async (a) => ({
+        id: a.id,
+        count: await this.prisma.complaint.count({
+          where: {
+            assignedTo: a.id,
+            status: { notIn: [ComplaintStatus.RESOLVED, ComplaintStatus.CLOSED] },
+          },
+        }),
+      })),
+    );
+
+    const picked = counts.reduce((min, cur) => (cur.count < min.count ? cur : min));
+    await this.repo.update(complaintId, {
+      assignedTo: picked.id,
+      status: ComplaintStatus.IN_REVIEW,
     });
   }
 

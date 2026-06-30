@@ -10,8 +10,10 @@ import { EMAIL_SERVICE } from './email.interface';
     {
       provide: EMAIL_SERVICE,
       useFactory: (configService: ConfigService) => {
-        const isDev = configService.get<string>('app.nodeEnv') === 'development';
-        return isDev ? new ConsoleEmailService() : new SmtpEmailService(configService);
+        // Use real SMTP whenever EMAIL_USER is set, regardless of NODE_ENV.
+        // Without credentials → console logs the email (safe for local dev).
+        const hasCredentials = !!configService.get<string>('email.user');
+        return hasCredentials ? new SmtpEmailService(configService) : new ConsoleEmailService();
       },
       inject: [ConfigService],
     },

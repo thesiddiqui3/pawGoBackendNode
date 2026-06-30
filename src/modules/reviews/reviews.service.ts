@@ -11,6 +11,7 @@ import { UserRole } from '../../common/enums';
 import { ReviewTargetType } from '../../common/enums/clinic.enum';
 import { ClinicRepository } from '../clinics/clinic.repository';
 import { DoctorRepository } from '../doctors/doctor.repository';
+import { ShopRepository } from '../shops/shop.repository';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { ReviewQueryDto } from './dto/review-query.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
@@ -24,6 +25,7 @@ export class ReviewsService {
     private readonly reviewRepository: ReviewRepository,
     private readonly clinicRepository: ClinicRepository,
     private readonly doctorRepository: DoctorRepository,
+    private readonly shopRepository: ShopRepository,
   ) {}
 
   // ─── Create ───────────────────────────────────────────────────────────────
@@ -86,16 +88,24 @@ export class ReviewsService {
 
   async addReply(id: string, reply: string, requesterId: string, role: string): Promise<Review> {
     const review = await this.findOrThrow(id);
+    const type = review.targetType as ReviewTargetType;
 
-    if (review.targetType !== 'CLINIC' && review.targetType !== 'ASSISTANT') {
-      throw new ForbiddenException('Use the shop replies endpoint for shop/product reviews');
+    if (role === UserRole.SUPER_ADMIN) {
+      return this.reviewRepository.addReply(id, reply, requesterId);
     }
 
-    if (role !== UserRole.SUPER_ADMIN) {
+    if (type === ReviewTargetType.CLINIC) {
       const clinic = await this.clinicRepository.findById(review.targetId);
       if (!clinic || clinic.createdBy !== requesterId) {
         throw new ForbiddenException('You can only reply to reviews of your own clinic');
       }
+    } else if (type === ReviewTargetType.SHOP || type === ReviewTargetType.PRODUCT) {
+      const shop = await this.shopRepository.findById(review.targetId);
+      if (!shop || shop.ownerId !== requesterId) {
+        throw new ForbiddenException('You can only reply to reviews of your own shop');
+      }
+    } else {
+      throw new ForbiddenException('Only clinic owners or admins can reply to doctor reviews');
     }
 
     return this.reviewRepository.addReply(id, reply, requesterId);
@@ -103,12 +113,24 @@ export class ReviewsService {
 
   async removeReply(id: string, requesterId: string, role: string): Promise<Review> {
     const review = await this.findOrThrow(id);
+    const type = review.targetType as ReviewTargetType;
 
-    if (role !== UserRole.SUPER_ADMIN) {
+    if (role === UserRole.SUPER_ADMIN) {
+      return this.reviewRepository.removeReply(id);
+    }
+
+    if (type === ReviewTargetType.CLINIC) {
       const clinic = await this.clinicRepository.findById(review.targetId);
       if (!clinic || clinic.createdBy !== requesterId) {
         throw new ForbiddenException('You can only remove replies from your own clinic reviews');
       }
+    } else if (type === ReviewTargetType.SHOP || type === ReviewTargetType.PRODUCT) {
+      const shop = await this.shopRepository.findById(review.targetId);
+      if (!shop || shop.ownerId !== requesterId) {
+        throw new ForbiddenException('You can only remove replies from your own shop reviews');
+      }
+    } else {
+      throw new ForbiddenException('Only clinic owners or admins can remove doctor review replies');
     }
 
     return this.reviewRepository.removeReply(id);
@@ -121,28 +143,43 @@ export class ReviewsService {
     targetId: string,
   ): Promise<void> {
     const agg = await this.reviewRepository.aggregateRating(targetType, targetId);
-    const rating = Math.round((agg._avg.rating ?? 0) * 10) / 10; // 1 decimal
+    const rating = Math.round((agg._avg.rating ?? 0) * 10) / 10;
     const totalReviews = agg._count.rating;
 
-    if (targetType === ReviewTargetType.CLINIC) {
-      await this.clinicRepository.updateRating(targetId, rating, totalReviews);
-    } else {
-      await this.doctorRepository.updateRating(targetId, rating, totalReviews);
+    switch (targetType) {
+      case ReviewTargetType.CLINIC:
+        await this.clinicRepository.updateRating(targetId, rating, totalReviews);
+        break;
+      case ReviewTargetType.ASSISTANT:
+        await this.doctorRepository.updateRating(targetId, rating, totalReviews);
+        break;
+      case ReviewTargetType.SHOP:
+      case ReviewTargetType.PRODUCT:
+        await this.shopRepository.updateRating(targetId, rating, totalReviews);
+        break;
     }
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private async assertTargetExists(targetType: ReviewTargetType, targetId: string): Promise<void> {
-    if (targetType === ReviewTargetType.CLINIC) {
-      const clinic = await this.clinicRepository.findById(targetId);
-      if (!clinic || clinic.deletedAt) {
-        throw new NotFoundException('Clinic not found');
+    switch (targetType) {
+      case ReviewTargetType.CLINIC: {
+        const clinic = await this.clinicRepository.findById(targetId);
+        if (!clinic || clinic.deletedAt) throw new NotFoundException('Clinic not found');
+        break;
       }
-    } else {
-      const doctor = await this.doctorRepository.findById(targetId);
-      if (!doctor || !doctor.isActive) {
-        throw new NotFoundException('Doctor not found');
+      case ReviewTargetType.ASSISTANT: {
+        const doctor = await this.doctorRepository.findById(targetId);
+        if (!doctor || !doctor.isActive) throw new NotFoundException('Doctor not found');
+        break;
+      }
+      case ReviewTargetType.SHOP:
+      case ReviewTargetType.PRODUCT: {
+        // For PRODUCT reviews, targetId is the shop's ID (products have no rating field)
+        const shop = await this.shopRepository.findById(targetId);
+        if (!shop || shop.deletedAt) throw new NotFoundException('Shop not found');
+        break;
       }
     }
   }

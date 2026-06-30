@@ -1,18 +1,25 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { UserRole } from '../../common/enums';
+import { EMAIL_SERVICE, IEmailService } from '../../shared/email/email.interface';
+import { emailTemplates } from '../../shared/email/email-templates';
 import { AssignDoctorDto, CancelHomeVisitDto, CreateHomeVisitDto } from './dto/create-home-visit.dto';
 
 const INCLUDE_FULL = {
   clinic: { select: { id: true, name: true, phone: true } },
   doctor: { include: { user: { select: { firstName: true, lastName: true } } } },
   pet: { select: { id: true, name: true, species: true, breed: true } },
-  owner: { select: { id: true, firstName: true, lastName: true, phone: true } },
+  owner: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
 };
 
 @Injectable()
 export class HomeVisitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(HomeVisitsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(EMAIL_SERVICE) private readonly emailService: IEmailService,
+  ) {}
 
   // ─── Create ───────────────────────────────────────────────────────────────
 
@@ -62,6 +69,42 @@ export class HomeVisitsService {
   }
 
   // ─── Clinic view ──────────────────────────────────────────────────────────
+
+  async findAll(status?: string, search?: string, clinicId?: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {
+      ...(clinicId ? { clinicId } : {}),
+      ...(status ? { status: status.toUpperCase() } : {}),
+      ...(search ? {
+        OR: [
+          { owner: { firstName: { contains: search, mode: 'insensitive' } } },
+          { owner: { lastName: { contains: search, mode: 'insensitive' } } },
+          { pet: { name: { contains: search, mode: 'insensitive' } } },
+          { address: { contains: search, mode: 'insensitive' } },
+          { clinic: { name: { contains: search, mode: 'insensitive' } } },
+        ],
+      } : {}),
+    };
+
+    const [data, total, statusCounts] = await this.prisma.$transaction([
+      this.prisma.homeVisit.findMany({
+        where,
+        include: { ...INCLUDE_FULL, clinic: { select: { id: true, name: true, phone: true } } },
+        orderBy: { scheduledAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.homeVisit.count({ where }),
+      this.prisma.homeVisit.groupBy({
+        by: ['status'],
+        orderBy: { status: 'asc' },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const counts = Object.fromEntries(statusCounts.map(s => [s.status.toLowerCase(), (s._count as Record<string, number>)._all ?? 0]));
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, statusCounts: counts };
+  }
 
   async findForClinic(userId: string, role: string, status?: string, page = 1, limit = 20) {
     const clinicId = await this.resolveClinicId(userId, role);
@@ -117,10 +160,46 @@ export class HomeVisitsService {
     });
     if (!doctor) throw new NotFoundException('Doctor not found at this clinic');
 
-    return this.prisma.homeVisit.update({
+    const updated = await this.prisma.homeVisit.update({
       where: { id },
       data: { doctorId: dto.doctorId, fee: dto.fee, status: 'ASSIGNED', assignedAt: new Date() },
       include: INCLUDE_FULL,
+    });
+
+    this.sendHomeVisitConfirmedEmail(updated as any).catch((err) =>
+      this.logger.error(`homeVisitConfirmed email failed for ${id}: ${err?.message}`),
+    );
+
+    return updated;
+  }
+
+  private async sendHomeVisitConfirmedEmail(visit: any): Promise<void> {
+    const owner = visit.owner;
+    if (!owner?.email) return;
+
+    const doctorName = visit.doctor?.user
+      ? `Dr. ${visit.doctor.user.firstName} ${visit.doctor.user.lastName}`
+      : 'Assigned Doctor';
+
+    const scheduledAt = new Date(visit.scheduledAt).toLocaleString('en-IN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+
+    const html = emailTemplates.homeVisitConfirmed(
+      owner.firstName ?? 'Customer',
+      visit.pet?.name ?? 'your pet',
+      visit.clinic?.name ?? 'Clinic',
+      doctorName,
+      scheduledAt,
+      visit.address ?? '',
+      visit.fee ?? 0,
+    );
+
+    await this.emailService.send({
+      to: owner.email,
+      subject: `Home Visit Confirmed — ${visit.pet?.name ?? 'Your Pet'}`,
+      html,
     });
   }
 

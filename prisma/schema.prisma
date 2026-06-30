@@ -16,6 +16,7 @@ datasource db {
 
 enum UserRole {
   SUPER_ADMIN
+  FIELD_AGENT
   PET_OWNER
   CLINIC_OWNER
   CLINIC_MANAGER
@@ -279,6 +280,7 @@ model User {
   complaints             Complaint[]             @relation("UserComplaints")
   clinicStaff            ClinicStaff?
   homeVisitsAsOwner      HomeVisit[]             @relation("HomeVisitOwner")
+  fieldAgent             FieldAgent?
 
   @@index([email])
   @@index([phone])
@@ -445,6 +447,11 @@ model Clinic {
   isVerified           Boolean @default(false)
   documentsSubmitted   Boolean @default(false)
   verificationNote     String?
+
+  // Field agent who onboarded this clinic
+  onboardedByAgentId   String?
+  onboardedByAgent     FieldAgent? @relation("AgentClinics", fields: [onboardedByAgentId], references: [id], onDelete: SetNull)
+  onboardedAt          DateTime?
 
   createdBy   String
   updatedBy   String?
@@ -966,6 +973,12 @@ model Shop {
   verificationNote     String?
   rating               Float    @default(0)
   totalReviews         Int      @default(0)
+
+  // Field agent who onboarded this shop
+  onboardedByAgentId   String?
+  onboardedByAgent     FieldAgent? @relation("AgentShops", fields: [onboardedByAgentId], references: [id], onDelete: SetNull)
+  onboardedAt          DateTime?
+
   createdBy            String
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -973,6 +986,7 @@ model Shop {
 
   products             Product[]
   orders               Order[]
+  services             PetService[]
   verificationDocs     VerificationDocument[] @relation("ShopDocs")
   coupons              Coupon[]
   reviews              Review[] @relation("ShopReviews")
@@ -1165,10 +1179,11 @@ model Order {
   tax           Float         @default(0)
   shipping      Float         @default(0)
   totalAmount   Float
-  paymentMethod PaymentMethod @default(COD)
-  paymentStatus PaymentStatus @default(PENDING)
-  orderStatus   OrderStatus   @default(PENDING)
-  notes         String?
+  paymentMethod         PaymentMethod @default(COD)
+  paymentStatus         PaymentStatus @default(PENDING)
+  paymentTransactionId  String?
+  orderStatus           OrderStatus   @default(PENDING)
+  notes                 String?
   placedAt      DateTime      @default(now())
   deliveredAt   DateTime?
   cancelledAt   DateTime?
@@ -1273,10 +1288,15 @@ model DeliveryPartner {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
+  bankName         String?
+  bankAccount      String?
+  bankIfsc         String?
+
   assignments           DeliveryAssignment[]
   locationUpdates       LocationUpdate[]
   ratings               DeliveryRating[]
   earnings              Earning[]
+  payoutRequests        PayoutRequest[]
   verificationDocs      VerificationDocument[] @relation("DeliveryPartnerDocs")
 
   @@index([isApproved])
@@ -1284,6 +1304,13 @@ model DeliveryPartner {
   @@index([isAvailable])
   @@index([userId])
   @@map("delivery_partners")
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
 }
 
 model DeliveryAssignment {
@@ -1358,6 +1385,26 @@ model Earning {
   @@index([deliveryPartnerId])
   @@index([createdAt])
   @@map("earnings")
+}
+
+model PayoutRequest {
+  id                String          @id @default(uuid())
+  deliveryPartnerId String
+  deliveryPartner   DeliveryPartner @relation(fields: [deliveryPartnerId], references: [id], onDelete: Cascade)
+  amount            Float
+  bankName          String
+  bankAccount       String
+  bankIfsc          String
+  status            PayoutStatus    @default(PENDING)
+  adminNote         String?
+  processedBy       String?
+  processedAt       DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([deliveryPartnerId])
+  @@index([status])
+  @@map("payout_requests")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1497,8 +1544,10 @@ model NotificationLog {
 
 model PetService {
   id               String          @id @default(uuid())
-  clinicId         String
-  clinic           Clinic          @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  clinicId         String?
+  clinic           Clinic?         @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  shopId           String?
+  shop             Shop?           @relation(fields: [shopId], references: [id], onDelete: Restrict)
   name             String
   description      String?
   category         ServiceCategory
@@ -1516,6 +1565,7 @@ model PetService {
   bookings         ServiceBooking[]
 
   @@index([clinicId])
+  @@index([shopId])
   @@index([category])
   @@index([isActive])
   @@index([price])
@@ -1679,6 +1729,46 @@ model AuditLog {
   @@index([entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Field Agent
+// ─────────────────────────────────────────────────────────────────────────────
+
+model FieldAgent {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Scoped permissions — which actions this agent can perform
+  canOnboardClinics Boolean @default(true)
+  canOnboardShops   Boolean @default(true)
+
+  // Territory / assignment info
+  assignedCity    String?
+  assignedState   String?
+  assignedRegion  String?
+
+  // Performance stats (denormalised, updated on each onboarding)
+  clinicsOnboarded Int @default(0)
+  shopsOnboarded   Int @default(0)
+
+  isActive    Boolean  @default(true)
+  suspendedAt DateTime?
+  suspendedBy String?
+  suspendNote String?
+
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  onboardedClinics Clinic[] @relation("AgentClinics")
+  onboardedShops   Shop[]   @relation("AgentShops")
+
+  @@index([isActive])
+  @@index([assignedCity])
+  @@index([assignedState])
+  @@map("field_agents")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

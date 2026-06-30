@@ -50,4 +50,10 @@ export class AppointmentQueryDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  @ApiPropertyOptional({ description: 'Filter walk-in appointments only', type: Boolean })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isWalkIn?: boolean;
 }

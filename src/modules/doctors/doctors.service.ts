@@ -151,7 +151,14 @@ export class DoctorsService {
     if (!doctor) throw new NotFoundException('Doctor not found');
 
     const verified = await this.doctorRepository.verify(id);
-    this.logger.log(`Doctor verified: ${id}`);
+
+    // Activate the user account so the assistant can now log in
+    await this.prisma.user.update({
+      where: { id: doctor.userId },
+      data: { status: 'ACTIVE' },
+    });
+
+    this.logger.log(`Doctor verified and activated: ${id}`);
     return verified;
   }
 

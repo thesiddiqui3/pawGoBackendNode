@@ -1,8 +1,12 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { UserRole } from '../../common/enums';
+import { EMAIL_SERVICE, IEmailService } from '../../shared/email/email.interface';
+import { emailTemplates } from '../../shared/email/email-templates';
 import { geocodeAddress } from '../../common/utils/geocode.util';
+import { FieldAgentsService } from '../field-agents/field-agents.service';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -23,6 +27,8 @@ export interface ProvisionClinicDto {
   description?: string;
   latitude?: number;
   longitude?: number;
+  // Optional: field agent who onboarded this clinic
+  onboardedByAgentId?: string;
 }
 
 export interface ProvisionShopDto {
@@ -41,6 +47,8 @@ export interface ProvisionShopDto {
   description?: string;
   latitude?: number;
   longitude?: number;
+  // Optional: field agent who onboarded this shop
+  onboardedByAgentId?: string;
 }
 
 export interface ProvisionResult {
@@ -68,7 +76,14 @@ function toSlug(name: string): string {
 
 @Injectable()
 export class AdminProvisionService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AdminProvisionService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+    @Inject(EMAIL_SERVICE) private readonly emailService: IEmailService,
+    private readonly fieldAgentsService: FieldAgentsService,
+  ) {}
 
   async provisionClinic(dto: ProvisionClinicDto): Promise<ProvisionResult> {
     const exists = await this.prisma.user.findUnique({ where: { email: dto.ownerEmail } });
@@ -77,6 +92,11 @@ export class AdminProvisionService {
     if (dto.ownerPhone) {
       const phoneExists = await this.prisma.user.findUnique({ where: { phone: dto.ownerPhone } });
       if (phoneExists) throw new ConflictException('A user with this phone number already exists');
+    }
+
+    // Validate agent permissions if onboarding via field agent
+    if (dto.onboardedByAgentId) {
+      await this.fieldAgentsService.assertCanOnboardClinic(dto.onboardedByAgentId);
     }
 
     const temporaryPassword = generatePassword();
@@ -121,8 +141,37 @@ export class AdminProvisionService {
         createdBy: user.id,
         services: [],
         ...(latitude && longitude && { latitude, longitude }),
+        ...(dto.onboardedByAgentId && {
+          onboardedByAgentId: dto.onboardedByAgentId,
+          onboardedAt: new Date(),
+        }),
       },
     });
+
+    // Increment agent counter asynchronously
+    if (dto.onboardedByAgentId) {
+      this.fieldAgentsService
+        .recordClinicOnboarding(dto.onboardedByAgentId)
+        .catch((err: Error) => this.logger.error(`Failed to increment agent clinic count: ${err?.message}`));
+    }
+
+    const clinicPortalUrl = this.configService.get<string>('app.clinicPortalUrl', 'http://localhost:3002');
+    this.emailService
+      .send({
+        to: dto.ownerEmail,
+        subject: `Welcome to PawGo — Your Clinic Portal Credentials`,
+        html: emailTemplates.ownerInvite(
+          dto.ownerFirstName,
+          dto.clinicName,
+          UserRole.CLINIC_OWNER,
+          dto.ownerEmail,
+          temporaryPassword,
+          clinicPortalUrl,
+        ),
+      })
+      .catch((err: Error) =>
+        this.logger.error(`Failed to send clinic owner invite email to ${dto.ownerEmail}: ${err?.message}`),
+      );
 
     return {
       credentials: { email: dto.ownerEmail, temporaryPassword },
@@ -137,6 +186,11 @@ export class AdminProvisionService {
     if (dto.ownerPhone) {
       const phoneExists = await this.prisma.user.findUnique({ where: { phone: dto.ownerPhone } });
       if (phoneExists) throw new ConflictException('A user with this phone number already exists');
+    }
+
+    // Validate agent permissions if onboarding via field agent
+    if (dto.onboardedByAgentId) {
+      await this.fieldAgentsService.assertCanOnboardShop(dto.onboardedByAgentId);
     }
 
     const temporaryPassword = generatePassword();
@@ -182,8 +236,37 @@ export class AdminProvisionService {
         ownerId: user.id,
         createdBy: user.id,
         ...(shopLat && shopLng && { latitude: shopLat, longitude: shopLng }),
+        ...(dto.onboardedByAgentId && {
+          onboardedByAgentId: dto.onboardedByAgentId,
+          onboardedAt: new Date(),
+        }),
       },
     });
+
+    // Increment agent counter asynchronously
+    if (dto.onboardedByAgentId) {
+      this.fieldAgentsService
+        .recordShopOnboarding(dto.onboardedByAgentId)
+        .catch((err: Error) => this.logger.error(`Failed to increment agent shop count: ${err?.message}`));
+    }
+
+    const shopPortalUrl = this.configService.get<string>('app.shopPortalUrl', 'http://localhost:3003');
+    this.emailService
+      .send({
+        to: dto.ownerEmail,
+        subject: `Welcome to PawGo — Your Shop Portal Credentials`,
+        html: emailTemplates.ownerInvite(
+          dto.ownerFirstName,
+          dto.shopName,
+          UserRole.SHOP_OWNER,
+          dto.ownerEmail,
+          temporaryPassword,
+          shopPortalUrl,
+        ),
+      })
+      .catch((err: Error) =>
+        this.logger.error(`Failed to send shop owner invite email to ${dto.ownerEmail}: ${err?.message}`),
+      );
 
     return {
       credentials: { email: dto.ownerEmail, temporaryPassword },

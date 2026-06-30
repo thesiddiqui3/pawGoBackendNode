@@ -33,6 +33,7 @@ export class ReviewRepository {
         comment: dto.comment,
         ...(dto.targetType === ReviewTargetType.CLINIC && { clinicId: dto.targetId }),
         ...(dto.targetType === ReviewTargetType.ASSISTANT && { doctorId: dto.targetId }),
+        ...((dto.targetType === ReviewTargetType.SHOP || dto.targetType === ReviewTargetType.PRODUCT) && { shopId: dto.targetId }),
       },
       include: { user: { select: USER_SELECT } },
     });
